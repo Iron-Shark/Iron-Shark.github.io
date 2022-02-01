@@ -1,0 +1,216 @@
+#+TITLE: Making Your Own Music Player: A Gentle Introduction to Audio Programming
+#+DATE: <2017-07-15 Sat>
+#+TAGS: tutorial, programming, audio, c
+
+To start off, I'd like to say that I know very little about audio programming
+and digital audio in general. I've never formally studied signal processing,
+and hell, I haven't even started high school physics yet. This post merely
+documents what I've learned while trying to get sound working in my game,
+because there aren't really any other learning resources about this out there.
+
+In this tutorial, we'll write a basic music player for Ogg Vorbis in C using
+two awesome libraries from Xiph.Org. The first, libao, will provide us with a
+means to play sound through our speakers, or headphones. or whatever, and we'll
+use libvorbisfile to decode the Ogg Vorbis files.
+
+libao, like most other audio libraries, works by giving us a *PCM buffer* that
+we write sound data to, and that gets played back. *PCM* stands for Pulse-Code
+Modulation, and it's the basis of digital audio programming. You might have
+heard people talk about how analog audio is so much better than digital, and I
+think that learning the difference between the two helps to better understand
+digial audio. Historically, sound was recorded in terms of analog signals,
+which were easy to store as something like field strength on a magnetic medium.
+However, digitizing audio requires the signal to be either sampled or
+quantized. Both techniques are fairly similar, basically getting an
+instantaneous representation of the signal some number of times a second. The
+image below does a good job of explaining it, I think.
+
+#+CAPTION: Diagram showing the difference between an analog sine wave and a quantization of that wave.
+[[./analog-vs-digital.png]]
+
+The rate at which the signal is sampled or quantized is the *frequency*. 44.1
+kHz is typically the standard - meanining that 441,000 samples are taken every
+second. The number of *channels* is essentially how many speakers the sound is
+meant for. Stereo sound is the standard, so that is typically 2. And finally,
+the audio can be 8, 16, 24, or 32 bit, representing the size of the integer
+used to represent the sample.
+
+Before we get into the code; you might need to configure libao if you're using
+PulseAudio. Just open it up in your favorite editor and change it as shown
+below.
+
+#+BEGIN_SRC
+$ sudo $EDITOR /etc/libao.conf
+# Change from
+default_driver=alsa
+dev=default
+# To
+default_driver=pulse
+# Make sure to remove the dev=default line
+#+END_SRC
+
+Now we're ready to get into the code. We'll include the headers for libao and
+libvorbisfile, as well as some standard library headers and the size of the PCM
+buffer, which I'll explain soon.
+
+#+BEGIN_SRC c :hl_lines 0
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <ao/ao.h>
+#include <vorbis/vorbisfile.h>
+
+#define BUF_SIZE 256
+#+END_SRC
+
+The program is actually simple enough that we can do everything in main. For
+clarity, I'll be using C99 variable declaration. Our program will take the file
+to play as a command-line argument, so the first thing we need to do is check
+argc.
+
+#+BEGIN_SRC c :hl_lines 0
+if (argc != 2) {
+    fprintf(stderr, "Usage: %s [PATH]\n", argv[0]);
+    return 1;
+}
+#+END_SRC
+
+Next, we'll initialize libao. We'll also get the ID of the default sound driver
+for when we open an audio device later.
+
+#+BEGIN_SRC c :hl_lines 0
+ao_initialize();
+int default_driver = ao_default_driver_id();
+#+END_SRC
+
+Now, we'll specify the output format we want. This is what we were talking about
+earlier, about frequency and channels and such. The only part of this that
+wasn't mentioned was =format.byte_format=, which is just the byte order of the
+PCM buffer. The Vorbis decoder will work with either big or little endian, but
+we'll just stick with little endian for simplicity.
+
+#+BEGIN_SRC c :hl_lines 0
+ao_sample_format format = {0};
+format.bits        = 16;
+format.channels    = 2;
+format.rate        = 44100;
+format.byte_format = AO_FMT_LITTLE;
+#+END_SRC
+
+We'll use this format structure to open an audio device with the default sound
+driver we figured out earlier.
+
+#+BEGIN_SRC c :hl_lines 0
+ao_device *device = ao_open_live(default_driver, &format, NULL);
+if (device == NULL) {
+    fprintf(stderr, "Error opening device\n");
+    return 1;
+}
+#+END_SRC
+
+And now, we'll get our PCM buffer. Some audio libraries have a routine to give
+you a a buffer, but libao is alright with us using pretty much anything, so
+we'll allocate it with =malloc(3)=. At this point, maybe you're wondering why we
+use a buffer. While we /could/ read and play one byte at a time, that can be
+very inefficient. It's better to read it into a buffer, and then play that
+buffer. You don't want it to be too large, though, as there will be a longer
+pause every time the buffer has to be read into. You also don't want it to be
+too small. I find that 256 is good enough, but you can tweak that to your needs.
+The size should be a power of two.
+
+#+BEGIN_SRC c :hl_lines 0
+char *buf = malloc(BUF_SIZE);
+if (buf == NULL) {
+    fprintf(stderr, "Error allocating PCM buffer.\n");
+    return 1;
+}
+#+END_SRC
+
+Now, we'll initialize libvorbisfile, which is done by opening the file we want
+to play. This huge switch statement isn't necessary, it's just there to show all
+the possible status codes of =ov_fopen=. Checking for a status code of 0 would
+be just fine here.
+
+#+BEGIN_SRC c :hl_lines 0
+OggVorbis_File vf;
+switch (ov_fopen(argv[1], &vf)) {
+case OV_EREAD:
+    fprintf(stderr, "Couldn't open %s.\n", argv[1]);
+    return 1;
+
+case OV_ENOTVORBIS:
+    fprintf(stderr, "File contains no vorbis data.\n");
+    return 1;
+
+case OV_EVERSION:
+    fprintf(stderr, "Vorbis version mismatch.\n");
+    return 1;
+
+case OV_EBADHEADER:
+    fprintf(stderr, "File contains a bad bitstream header.\n");
+    return 1;
+
+case OV_EFAULT:
+    fprintf(stderr, "Failure induced by heap/stack corruption.\n");
+    return 1;
+}
+#+END_SRC
+
+The real meat and potatoes of the program comes next. A loop that continually
+reads data into our PCM buffer and plays it, until there's no more data to
+play.
+
+#+BEGIN_SRC c :hl_lines 0
+int read, bitstream;
+do {
+    read = ov_read(&vf, buf, BUF_SIZE, 0, 2, 1, &bitstream);
+    ao_play(device, buf, BUF_SIZE);
+} while (read > 0);
+#+END_SRC
+
+The random integer constants in the call to =ov_read= might be a bit
+intimidating, but it's really nothing to worry about. The first parameter is
+whether or not the PCM buffer is big endian (which it is not, so we pass 0), the
+second is the sample size, where 2 represents 16-bit, and the third is whether
+or not the data is signed. You can read more about it in [[https://xiph.org/vorbis/doc/vorbisfile/ov_read.html][the documentation]].
+
+Hopefully, things are starting to click around now. Any sound that comes out of
+your speakers is just a bunch of numbers, and file formats like Ogg and MP3 are
+just a means of compressing those numbers.
+
+And finally, we'll finish up with some cleanup.
+
+#+BEGIN_SRC c :hl_lines 0
+free(buf);
+ov_clear(&vf);
+ao_close(device);
+ao_shutdown();
+return 0;
+#+END_SRC
+
+Compilation is pretty easy, too.
+
+#+BEGIN_SRC
+$ gcc -o oggplay oggplay.c -lvorbisfile -lao
+#+END_SRC
+
+Pretty painless, right? Without error handling, this is about 21 lines of code.
+
+Go ahead, try it out! If you don't save your music as Ogg Vorbis, you can
+convert songs with ffmpeg:
+
+#+BEGIN_SRC
+$ ffmpeg -i [file] -c:a libvorbis song.ogg
+#+END_SRC
+
+Here are some exercises if you want to play with this more:
+- Get the frequency from the file being played, rather than hardcoding it at
+  44.1 kHz. Check out the [[https://xiph.org/vorbis/doc/vorbisfile/reference.html][file Information section of the documentation]].
+- Add a status line showing the current timestamp.
+- Watch [[https://www.youtube.com/watch?v=pFgui9uGmr4][this talk from SIGINT13]].
+- Play two sounds at once by adding their PCM values. Keep in mind that 8-bit
+  and 16-bit integers overflow quite easily.
+- Learn the library for another audio codec/container, like libopenmpt for
+  classic tracker music.
+- If you're feeling particularly up to a challenge, try rewriting the player
+  using just libvorbis and libogg, rather than libvorbisfile.

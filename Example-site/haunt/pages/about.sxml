@@ -1,0 +1,368 @@
+;;; -*- scheme -*-
+
+;;; Copyright © 2019 - 2021 Jakob L. Kreuze <zerodaysfordays@sdf.org>
+;;;
+;;; This program is free software; you can redistribute it and/or
+;;; modify it under the terms of the GNU General Public License as
+;;; published by the Free Software Foundation; either version 3 of the
+;;; License, or (at your option) any later version.
+;;;
+;;; This program is distributed in the hope that it will be useful,
+;;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+;;; General Public License for more details.
+;;;
+;;; You should have received a copy of the GNU General Public License
+;;; along with this program. If not, see
+;;; <http://www.gnu.org/licenses/>.
+
+(use-modules (ice-9 match)
+             (ice-9 rdelim)
+             (ice-9 popen)
+             (jakob theme)
+             (jakob utils sxml)
+             (srfi srfi-1)
+             (srfi srfi-19)
+             (sxml simple))
+
+(define %software-projects
+  `(("Kona" rust
+     "https://git.sr.ht/~jakob/kona"
+     "./repositories/kona/"
+     ("Lightweight, self-hosted tagged image gallery."))
+    ("zerodaysfordays" ebuild
+     "https://git.sr.ht/~jakob/zerodaysfordays"
+     "./repositories/zerodaysfordays/"
+     ("My personal Gentoo overlay."))
+    ("My Website" scheme
+     "https://git.sr.ht/~jakob/blog"
+     "../"
+     ("The website you're reading right now. Effectively a massive 'contrib'
+module for " ,(hyperlink "https://dthompson.us/projects/haunt.html" "Haunt")
+"."))))
+
+(define %abandoned-software-projects
+  `(("ox-haunt" elisp
+     "https://git.sr.ht/~jakob/ox-haunt"
+     "./repositories/ox-haunt/"
+     ("Haunt-flavored HTML backend for the Org export engine")
+     ,(string->date "Apr 05 2020" "~b ~e ~Y"))
+    ("Mines" kotlin
+     "https://git.sr.ht/~jakob/mines"
+     "./repositories/mines/"
+     ("Android implementation of the classic video game \"Minesweeper\".")
+     ,(string->date "Apr 12 2019" "~b ~e ~Y"))
+    ("Slime the World" fennel
+     "https://git.sr.ht/~jakob/slime-the-world"
+     "./repositories/slime-the-world/"
+     ("My entry for the 2018 Autumn Lisp Game Jam; a game about covering everything in slime.")
+     ,(string->date "Jan 01 2019" "~b ~e ~Y"))
+    ("Rebuild" rust
+     "https://git.sr.ht/~jakob/rebuild"
+     "./repositories/rebuild/"
+     ("An attempt at reimplementing Ken Silverman's Build engine, with the goal of being modular enough to host a modern Blood source port.")
+     ,(string->date "Sep 23 2018" "~b ~e ~Y"))
+    ("wildmidi" rust
+     "https://git.sr.ht/~jakob/wildmidi"
+     "./repositories/wildmidi/"
+     ("A simple [Rust] wrapper around the WildMIDI software synthesizer library.")
+     ,(string->date "Aug 31 2018" "~b ~e ~Y"))
+    ("Duke on FluidSynth" c++
+     "https://git.sr.ht/~jakob/duke-on-fluidsynth"
+     "./repositories/duke-on-fluidsynth/"
+     ("Experimental FluidSynth MIDI driver for EDuke32.")
+     ,(string->date "Apr 13 2018" "~b ~e ~Y"))
+    ("Hypodermic" python
+     "https://git.sr.ht/~jakob/hypodermic"
+     "./repositories/hypodermic/"
+     ("Proof-of-concept shared object injector that will eventually be integrated with PINCE.")
+     ,(string->date "Jan 22 2018" "~b ~e ~Y"))
+    ("skullfuck" c
+     "https://git.sr.ht/~jakob/skullfuck"
+     "./repositories/skullfuck/"
+     ("Optimizing compiler for Brainfuck, contained in a single C source file.")
+     ,(string->date "Jun 21 2017" "~b ~e ~Y"))
+    ("Nekopack" c
+     "https://git.sr.ht/~jakob/nekopack"
+     "./repositories/nekopack/"
+     ("Tool for extracting game data from Nekopara's XP3 archives.")
+     ,(string->date "Dec 01 2017" "~b ~e ~Y"))))
+
+(define %software-contributions
+  `(("GNU Guix" scheme
+     "https://guix.gnu.org"
+     "./repositories/guix"
+     ("Functional cross-platform package manager and a tool to instantiate and manage
+Unix-like operating systems, based on the Nix package manager.")
+     ,(string->date "Dec 28 2019" "~b ~e ~Y"))
+    ("Radare2" c
+     "https://www.radare.org/r/"
+     "./repositories/radare2"
+     ("UNIX-like reverse engineering framework and command-line tools.")
+     ,(string->date "Nov 09 2018" "~b ~e ~Y"))
+    ("Haiku" c++
+     "https://www.haiku-os.org/"
+     "./repositories/haiku"
+     ("The Haiku operating system.")
+     ,(string->date "Jun 31 2019" "~b ~e ~Y"))
+    ("PINCE" python
+     "https://github.com/korcankaraokcu/PINCE"
+     "./repositories/pince"
+     ("A reverse engineering tool, comparable to Cheat Engine for GNU/Linux. I still
+maintain the Arch Linux package, which is unfortunate, as I no longer use Arch
+Linux.")
+     ,(string->date "Apr 15 2018" "~b ~e ~Y"))))
+
+(define %ctf-teams
+  `((2016
+     "Shaq Overflow"
+     "https://ctftime.org/team/28150"
+     "https://ctftime.org/media/cache/81/35/813561ed466cd4ea5303de2cb394a5f5.png"
+     178
+     3244)
+    (2017
+     "Shaq Overflow"
+     "https://ctftime.org/team/28150"
+     "https://ctftime.org/media/cache/81/35/813561ed466cd4ea5303de2cb394a5f5.png"
+     349
+     12096)
+    (2017
+     "0xBU"
+     "https://ctftime.org/team/22064"
+     "https://ctftime.org/media/cache/1c/a8/1ca85a2b2f131b0c3b73439b06f5f9dc.png"
+     25
+     216)
+    (2018
+     "0xBU"
+     "https://ctftime.org/team/22064"
+     "https://ctftime.org/media/cache/1c/a8/1ca85a2b2f131b0c3b73439b06f5f9dc.png"
+     29
+     267)
+    (2019
+     "0x7C_Jake"
+     "https://ctftime.org/team/77995"
+     "https://ctftime.org/media/cache/05/52/05526f1aa281e0b1e6792ffaaa08cd2c.png"
+     "Unranked"
+     "Unranked")
+    (2019
+     "SavedByTheShell"
+     "https://ctftime.org/team/78233"
+     "https://ctftime.org/media/cache/37/37/37370fff4b9f8c907a4fee83fb6950bf.png"
+     102
+     942)
+    (2020
+     "SavedByTheShell"
+     "https://ctftime.org/team/78233"
+     "https://ctftime.org/media/cache/37/37/37370fff4b9f8c907a4fee83fb6950bf.png"
+     63
+     492)))
+
+(define (lang-to-button lang)
+  (case lang
+    ((c)      '(button (@ (class "lang-c"))      "C"))
+    ((c++)    '(button (@ (class "lang-cpp"))    "C++"))
+    ((python) '(button (@ (class "lang-python")) "Python"))
+    ((rust)   '(button (@ (class "lang-rust"))   "Rust"))
+    ((kotlin) '(button (@ (class "lang-kotlin")) "Kotlin"))
+    ((fennel) '(button (@ (class "lang-fennel")) "Fennel"))
+    ((elisp)  '(button (@ (class "lang-elisp"))  "Elisp"))
+    ((scheme) '(button (@ (class "lang-scheme")) "Scheme"))
+    ((ebuild) '(button (@ (class "lang-ebuild")) "Ebuild"))))
+
+(define (date-of-first-commit repository-path)
+    "Return the date of the first commit in `repository-path'."
+    (let* ((command (format #f "bash -c 'cd \"~a\"; git log --author=\"[Jj]akob\" --reverse --pretty=\"format:%at\" | head -n 1'"
+                            repository-path))
+           (port (open-input-pipe command))
+           (str  (read-line port)))
+      (close-pipe port)
+      (time-utc->date (make-time 'time-utc 0 (string->number str)))))
+
+(define* (bin-commit-counts repository-path #:key start end)
+  "Count commits per month-long interval between `start' and `end'.
+
+Take `end' to be `(current-date)' if unspecified. Similarly, take `start' to be
+the date of the first commit in the repository if unspecified."
+  (define (date-in-past date)
+    "Return `#t' iff `date' is in the past.
+
+If `end' is specified, return `#t' iff `date' is prior to `end'."
+    (time<=? (date->time-utc date)
+             (if end
+                 (date->time-utc end)
+                 (current-time 'time-utc))))
+  (define (increment-date-by-month date)
+    "Return a SRFI-19 date one month in the future from `date'."
+    ;; Special handling for leap years.
+    (define (days-in-month date)
+      (if (= 2 (date-month date))
+          (if (and (or (zero? (remainder (date-year date) 400))
+                       (positive? (remainder (date-year date) 100)))
+                   (zero? (remainder (date-year date) 4)))
+              29
+              28)
+          (cadr
+           (assoc (date-month date)
+                  '((1 31) (3 31) (4 30) (5 31) (6 30) (7 31)
+                    (8 31) (9 30) (10 31) (11 30) (12 31))))))
+    (time-utc->date
+     (add-duration (date->time-utc date)
+                   (make-time 'time-duration 0 (* 60 60 24
+                                                  (days-in-month date))))))
+  (define (count-commits-in-month start-date)
+    "Return the number of commits in the month starting on `start-date'."
+    (let* ((end-date (increment-date-by-month start-date))
+           (command (format #f "bash -c 'cd \"~a\"; git rev-list --count HEAD --author=\"[Jj]akob\" --since=\"~a\" --before=\"~a\"'"
+                            repository-path
+                            (date->string start-date "~b ~e ~Y")
+                            (date->string end-date "~b ~e ~Y"))))
+      (let* ((port (open-input-pipe command))
+             (str  (read-line port)))
+        (close-pipe port)
+        str)))
+  (let loop ((bin '())
+             (date (or start (date-of-first-commit repository-path))))
+    (if (date-in-past date)
+        (loop (cons (count-commits-in-month date) bin)
+              (increment-date-by-month date))
+        (reverse! (map string->number bin)))))
+
+(define* (render-histogram summary #:key (width 60) (height 25))
+  "Render a list of intervals as an SVG histogram."
+  ;; Assuming an interval lasts a month, I'm lucky to get 50 commits in.
+  (define max-commits-per-interval 50)
+  (define (format-shapes shapes)
+    `(svg (@ (xmlns "http://www.w3.org/2000/svg")
+             (version "1.1")
+             (width  ,(number->string width))
+             (height ,(number->string height)))
+          ;; Border for the histogram.
+          (rect (@ (x "0") (y "0") (width ,width) (height ,height)
+                   (stroke "black") (stroke-width "1")
+                   (fill "transparent")))
+          ,@shapes))
+  (let* ((summary (if (> (length summary) 30)
+                      (take-right summary 30)
+                      summary))
+         (content-width (* 2 (length summary)))
+         (right-pad (max (- width content-width) 0))
+         (upper-bound (max max-commits-per-interval
+                           (apply max summary))))
+    (format-shapes
+     (map (match-lambda
+            ((commit-count i)
+             `(line (@ (stroke "black")
+                       (stroke-width "1")
+                       ;; Separate strokes by 2px and pad to the right.
+                       (x1 ,(+ right-pad (* i 2)))
+                       (x2 ,(+ right-pad (* i 2)))
+                       (y1 ,height)
+                       (y2 ,(exact->inexact
+                             (- height
+                                (* (/ commit-count upper-bound)
+                                   height))))))))
+          (zip summary (iota (length summary)))))))
+
+(define* (project name lang url repository-path description #:optional end-date)
+  (let ((start-date (date-of-first-commit repository-path)))
+    `(tr (td ,(hyperlink url name))
+         (td ,(lang-to-button lang))
+         (td ,(render-histogram (bin-commit-counts repository-path #:end end-date)))
+         (td ,(if end-date
+                  (format #f "~a - ~a"
+                          (date->string start-date "~b ~e ~Y")
+                          (date->string end-date "~b ~e ~Y"))
+                  (format #f "~a - Present" (date->string start-date "~b ~e ~Y"))))
+         (td (p ,@description)))))
+
+(define* (ctf-team year name url icon-url country-rating global-rating)
+  `(tr (td ,year)
+       (td (img (@ (src ,icon-url) (alt "Team logo."))))
+       (td ,(hyperlink url name))
+       (td ,country-rating)
+       (td ,global-rating)))
+
+(define* (project-section title format items #:key class subtitle folded)
+  #<(section
+    (h4 ,title)
+    ,(when subtitle `(p ,subtitle))
+    (table (@ (class ,(or class "project-section")))
+     (tbody
+      ,@(map (lambda (args) (apply format args)) items)))))
+
+(theme
+ #:title "About"
+ #:content
+ `((h2 "Hey.")
+   (ul (@ (class "horizontal-list"))
+       (li "Email: " (strong "zerodaysfordays at ‌﻿​﻿‌﻿‌﻿‌﻿​﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿​﻿‌﻿‍﻿‌﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿​﻿‌﻿​﻿‌﻿‌﻿‍﻿‌﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿​﻿​﻿‌﻿‍﻿‌﻿​﻿‌﻿​﻿‌﻿​﻿‌﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿‌﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿‌﻿‌﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿​﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿​﻿​﻿​﻿‍﻿‌﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‌﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿‌﻿​﻿‍﻿‌﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿‌﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿​﻿‌﻿​sdf.org"))
+       (li "XMPP: " (strong "jakob at ‌﻿​﻿‌﻿‌﻿‌﻿​﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿​﻿‌﻿‍﻿‌﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿​﻿‌﻿​﻿‌﻿‌﻿‍﻿‌﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿​﻿​﻿‌﻿‍﻿‌﻿​﻿‌﻿​﻿‌﻿​﻿‌﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿‌﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿‌﻿‌﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿​﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿​﻿​﻿​﻿‍﻿‌﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿‍﻿‌﻿​﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‌﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿‌﻿​﻿‍﻿‌﻿‌﻿​﻿‌﻿‌﻿‌﻿‌﻿‌﻿‍﻿‌﻿​﻿‌﻿‌﻿​﻿​﻿‌﻿​﻿‍﻿‌﻿​﻿‌﻿‌﻿‌﻿​﻿‌﻿​xmpp.is"))
+       (li "IRC: " (strong "tsarfox on irc.libera.chat.")))
+   (ul (@ (class "horizontal-list"))
+       (li "GPG: " ,(hyperlink "/static/gpg.txt" "6581 A4FC 404F 6434 AEA3  008C 45ED 4DC3 05BA DA33")))
+   (ul (@ (class "horizontal-list"))
+       (li ,(hyperlink "https://git.sr.ht/~jakob" "git"))
+       (li ,(hyperlink "https://mastodon.sdf.org/@jakob" "fedi"))
+       (li ,(hyperlink "https://en.wikipedia.org/wiki/User:ZeroDaysForDays" "wiki"))
+       (li ,(hyperlink "http://tilde.town/~jakob" "tilde"))
+       (li ,(hyperlink "http://zerodaysfordays.sdf.org/" "sdf"))
+       (li ,(hyperlink "https://lobste.rs/u/jakob" "lobste.rs")))
+   (main (@ (class "overline"))
+         (p "My name's Jakob, and I'm a self-taught "
+            ,(hyperlink "https://www.gnu.org/philosophy/free-sw.html" "free software")
+            ,(hyperlink "https://en.wikipedia.org/wiki/Hacker_culture#Definition" " hacker")
+            ". I'm into functional programming, computer security, permaculture, and lifting
+weights.")
+         (p "That's the short version. I have a longer biography available " ,(hyperlink "/pages/about-complete.html" "here") ".")
+         (p (b "N.B. ")
+            "if you have sent an email to an address of mine
+ending in 'sdf.lonestar.org' between January 2nd, 2020 and now, I have not
+received it. SDF has discontinued mail service on that domain. As such, "
+            ,(hyperlink "https://paste.sr.ht/%7Ejakob/18c048600c26d125d6d743e6d5b44db852573242" "I have a new PGP key.")))
+   (h3 "Site Map")
+   (nav (@ (id "site-map"))
+        (section (h4 ,(hyperlink "/blogroll" "Blogroll"))
+                 (p "A noncomprehensive list of the blogs I follow."))
+        (section (h4 ,(hyperlink "/bookmark" "Bookmarks"))
+                 (p "Collection of some things that I especially enjoyed reading."))
+        ;; (section (h4 ,(hyperlink "/outbox" "Webmention Outbox"))
+        ;;          (p "List of all the Webmention replies I've sent. Probably uninteresting to most."))
+        )
+   (h3 "Projects")
+   ,(project-section
+     "Software"
+     project
+     %software-projects)
+   ,(project-section
+     "Other Contributions"
+     project
+     %software-contributions
+     #:subtitle
+     "There are a few non-trivial contributions I've made to various free software
+projects, which I enumerate here. I take pride in giving back code.")
+   ,(project-section
+     "Software (Abandoned)"
+     project
+     %abandoned-software-projects
+     #:subtitle
+     "The unfortunate reality of hobbyist programming is that projects to be
+abandoned once that coding itch is satisfied. That's true of many of my
+projects."
+     #:folded #t)
+   (h3 "Capture the Flag")
+   ,(project-section
+     "Team Timeline"
+     ctf-team
+     %ctf-teams
+     #:class "team-timeline-section")
+   (h3 "Events Hosted")
+   (ul
+    (li "UMass CTF 2020")
+    (li ,(hyperlink "https://ctftime.org/event/1282" "UMass CTF 2021")))
+   (h3 "Presentations")
+   (table
+    (tr (td "Introduction to Binary Exploitation") (td "UMass Amherst") (td "October 23rd, 2019"))
+    (tr (td "Learning Assembly for Fun and Profit (and Flags)") (td "UMass Amherst") (td "March 4th, 2020"))
+    (tr (td "UMass Cybersecurity Club Reverse Engineering Workshop") (td "UMass Amherst") (td "October 4th, 2021")))
+   (h3 "Publications")
+   (p (em "None. Yet..."))))

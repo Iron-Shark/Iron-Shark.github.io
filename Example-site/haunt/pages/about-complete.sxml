@@ -1,0 +1,304 @@
+;;; -*- scheme -*-
+
+;;; Copyright © 2019 - 2021 Jakob L. Kreuze <zerodaysfordays@sdf.org>
+;;;
+;;; This program is free software; you can redistribute it and/or
+;;; modify it under the terms of the GNU General Public License as
+;;; published by the Free Software Foundation; either version 3 of the
+;;; License, or (at your option) any later version.
+;;;
+;;; This program is distributed in the hope that it will be useful,
+;;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+;;; General Public License for more details.
+;;;
+;;; You should have received a copy of the GNU General Public License
+;;; along with this program. If not, see
+;;; <http://www.gnu.org/licenses/>.
+
+(use-modules (ice-9 match)
+             (jakob theme)
+             (jakob utils sxml))
+
+(theme
+ #:title "About me"
+ #:content
+ `((h2 "About me.")
+   (p "My name is Jakob. I'm a 21 year-old living just outside of Boston,
+Massachusetts. I'm a recent graduate from the University of Massachusetts
+Amherst, and I'm now working as a professional computer scientist.")
+   (p "I work primarily with the design of secure systems. My research interests are
+cryptography, distributed computing, symbolic execution, and signals processing.
+Of these, cryptography is what I worked on as an undergraduate research
+assistant. The experience was gratifying and greatly influenced my career path.")
+   (p "My free time not spent on chores or being with friends and family is spent
+working on personal projects, which are outlined " ,(hyperlink "/pages/about.html" "here") ".")
+   (p "If you're interested in game engine tech, my younger brother is working
+on a game engine + graphics engine of his own. You can read about it on "
+,(hyperlink "https://p0ly.com/" "his website") ". I like to think of him as my
+protégé, but he's mostly self-taught.")
+   (p "I live with my partner, Oli, whom I've offered web space on this server, but who
+has yet to take me up on that offer.")
+   (h3 "My Interests")
+   (h4 "(Functional) programming")
+   (p "I was introduced to computer programming at an early age. My parents were given
+a Nintendo 64 as a wedding gift shortly before I was born, so I spent my early
+years playing " (em "Ocarina of Time") " and the likes. My young, impressionable
+mind drew inspiration, and I would go on about how I wanted to make games of my
+own. My technically-apt father was able to point me in the right direction for
+learning to do so.")
+   (p "I was writing small games in Python by the time I was ten years old, though I
+have little to show for it with much lost to failing hard drives. The interest
+waxed and waned, but picked back up significantly when I turned 14 and began
+using GNU/Linux.")
+   (p "The renowned " (em "Structure and Interpretation of Computer Programs")
+      " was my introduction to functional programming, recommended by several in the
+\"online\" circle I hung around circa then. It's an excellent book, but I was
+not mature enough to understand it at that age. The points about higher-order
+functions did, however, click for me, and I was inspired to begin using the
+handful of functional programming tools available in Python, and to learn Common
+Lisp (because I thought the syntax laden with parentheses was obscure and cool).
+")
+   (p "This was all prior to learning about the sort of object-oriented style that was
+taught in my AP computer science class. Having to deal with that programming
+paradigm really cemented my opinions about why functional is the \"right\" way
+to write software.
+")
+   (p "Nowadays, my favorite programming languages are Scheme, Haskell, and Rust.
+Depending on who you ask, some subset of those languages are \"functional
+programming languages.\" It's not a clear-cut term, but what it means to me is
+an emphasis on immutability and higher-order functions. I consider all three to
+be functional, though Rust is (necessarily) somewhat of a black sheep.")
+   (h4 "Computer security")
+   (p "Amid my early years with computer programming, I was briefly introduced
+to web development and, in particular, PHP. The language has a reputation for
+the ease with which one can introduce security vulnerabilities, and as such, the
+book I was using to teach myself at the time expatiated about SQL injection,
+going so far as to walk the reader through an example. At eleven years old, this
+piqued my interest, and I soon sought out as much material on computer security
+as I could, showing my classmates what I could do on "
+      ,(hyperlink "https://www.hackthissite.org/" "HackThisSite") ".")
+   (p "I began playing capture-the-flag when I was in high school and came across
+LiveOverflow's "
+,(hyperlink "https://yewtu.be/playlist?list=PLhixgUqwRTjxglIswKp9mpkfPNfHkzyeN" "early
+videos")", which inspired me to play in the (now defunct) "
+,(hyperlink "https://ctf-x.github.io/" "CTF(x)") ". I was on a team of one until
+I started playing with " ,(hyperlink "https://0xbu.com/blog/" "0xBU")". I was still in
+high school, only 16, but I noticed them on the leader-board, and I was a train
+ride's away from the city, so I reached out to ask if I could show up to their
+meetings. They said yes. So I spent most of my weekends downtown, getting good
+at pwning.")
+   (p "In my university years, I was an e-board member of the " ,(hyperlink "https://umasscybersec.org/" "UMass Cybersecurity Club")
+      ": playing for their CTF team, and putting serious work into the CTF's we
+hosted.")
+   (h4 "Permaculture")
+   (p "My parents always had a garden when I was growing up, and I took to the idea of
+self-resiliency: being able to grow one's own food. I have luck when I try to
+grow things -- perhaps I have some natural intuition from observing my mother's
+gardening all these years -- but I am not as dedicated to it as I am to my other
+interests. I'm happy to throw a few tomato seeds in the ground and weed every
+once in a while, reaping the benefits of delicious red sauce for pasta and
+pizza.")
+   (h4 "Lifting weights")
+   (p "I exercise every day, barring extreme circumstances.")
+   (p "Sports did not interest me when I was young. I was signed up for soccer, and
+basketball, and many other after-school sports programs, but nothing stuck.")
+   (p "At 13, I joined the " ,(hyperlink "https://en.wikipedia.org/wiki/Civil_Air_Patrol" "Civil Air Patrol")
+      ", which changed my prior attitudes toward fitness. Now I had to pass
+fitness tests to promote, and I necessarily had to be in-shape for the emergency
+response work I was doing, so I picked up a regular exercise routine. I began
+with body-weight exercises and running outside, and I fell in love with it.
+Pushing yourself to exhaustion -- until you can barely lift your arms -- is
+addicting. But I was soon bored with calisthenics and begged my parents for a
+gym membership. I posed it as something I could do with my dad, so that's how I
+spent my evenings in high school.")
+   (p "I don't lift competitively. I've had aspirations to over the years, but injuries
+have prevented me from pushing enough weight to place (herniated disk circa
+2017, gluteus medius tear circa 2020). Perhaps my time will come.")
+   (p "I'm selective about the fitness-related content I consume, tending to prefer
+reading folks in the \"evidence-based fitness community,\" like Greg Nuckols,
+Eric Trexler, and Jeff Nippard.")
+   (h5 "Regimen")
+   (p "A given day is cardio xor weightlifting. It's rare that I do both on the same
+day. This is for the resiliency of my routine; if I know I'm going to be stuck
+somewhere without access to weights, I can still keep my routine by going
+outside to run.")
+   (p "At the moment, I do the following push-pull-legs routine, largely adapted from
+" ,(hyperlink "https://yewtu.be/watch?v=qVek72z3F1U" "this video")
+". The scheduling is (Push I, Pull I, Legs I, Push II, ...). Four days of
+lifting per week, with cardio interspersed as the weather will allow.")
+   (h6 "Legs I")
+   (p "Perform squat at 80% of 1RM.")
+   (table
+    (thead
+     (tr (th "Sets × Reps") (th "Exercise")))
+    (tbody
+     (tr (td "3 × 4"         ) (td "Squat"))
+     (tr (td "3 × 10"        ) (td "Romanian Deadlift"))
+     (tr (td "3 × 15"        ) (td "Bulgarian Split-Squat"))
+     (tr (td "3 × 10 − 12"   ) (td "Front Squat"))
+     (tr (td "3 × 10 − 12"   ) (td "Single-Leg Elevated Hip Thrust"))
+     (tr (td "3 × 12"        ) (td "Standing Calf-Raise"))
+     (tr (td "2 × 10 − 12"   ) (td "Decline Crunches"))
+     (tr (td "2 × 30s"       ) (td "Long-Lever Planks"))))
+   (h6 "Legs II")
+   (p "Perform deadlift at 80%-85% of 1RM.")
+   (table
+    (thead
+     (tr (th "Sets × Reps") (th "Exercise")))
+    (tbody
+     (tr (td "3 × 3"         ) (td "Deadlift"))
+     (tr (td "3 × 10 − 12"   ) (td "Goblet Squat"))
+     (tr (td "2 × 15"        ) (td "Single-Leg Hip Thrust"))
+     (tr (td" "              ) (td "Nordic Ham Curl; Back Extension"))
+     (tr (td "3 × 8 − 10"    ) (td "Single-leg Calf-Raise"))
+     (tr (td "3 sets"        ) (td "Weighted L-Sit Hold"))))
+   (h6 "Push I")
+   (p "Perform bench press at 62.5% of 1RM. Egyptian Lateral Raise and Cable Tricep
+Kickback should have a MYO set.")
+   (table
+    (thead
+     (tr (th "Sets × Reps") (th "Exercise")))
+    (tbody
+     (tr (td "3 × 8"         ) (td "Bench Press"))
+     (tr (td "3 × 12"        ) (td "Standing Dumbbell Arnold Press"))
+     (tr (td "3 × 12 − 15"   ) (td "Dips"))
+     (tr (td "3 × 8 − 10"    ) (td "Eccentric-Accentuated Skullcrusher"))
+     (tr (td "3 × 12"        ) (td "Egyptian Lateral Raise"))
+     (tr (td "3 × 20 − 30"   ) (td "Cable Tricep Kickback"))))
+   (h6 "Push II")
+   (p "Perform overhead press at 80% of 1RM. Cable Crossover should have a MYO set.")
+   (table
+    (thead
+     (tr (th "Sets × Reps") (th "Exercise")))
+    (tbody
+     (tr (td "4 × 4"         ) (td "Overhead Press"))
+     (tr (td "3 × 10"        ) (td "Close-Grip Bench Press"))
+     (tr (td "3 × 10 − 12"   ) (td "Cable Crossover"))
+     (tr (td "3 × 10 − 12"   ) (td "Overhead Tricep Extension"))
+     (tr (td "3 × 7/7/7"     ) (td "Lateral Raise 21’s"))
+     (tr (td "3 × 10 − 12"   ) (td "Neck Traning"))))
+   (h6 "Pull I")
+   (table
+    (thead
+     (tr (th "Sets × Reps") (th "Exercise")))
+    (tbody
+     (tr (td "3 × 6"         ) (td "Weighted Pull-Up"))
+     (tr (td "3 × 10 − 12"   ) (td "Dumbbell or Cable Row"))
+     (tr (td "3 × 15 − 20"   ) (td "Kneeling Cable Pullover"))
+     (tr (td "3 × 8 − 10"    ) (td "Hammer Cheat Curls"))
+     (tr (td "2 × 12 − 15"   ) (td "Seated Incline Dumbbell Curls"))))
+   (h6 "Pull II")
+   (p "Vary grip between sets on Lat Pulldown.")
+   (table
+    (thead
+     (tr (th "Sets × Reps") (th "Exercise")))
+    (tbody
+     (tr (td "3 × 6"         ) (td "Lat Pulldown"))
+     (tr (td "3 × 10 − 12"   ) (td "Chest-Supported Row"))
+     (tr (td "3 × 15 − 20"   ) (td "Rope Facepulls"))
+     (tr (td "3 × 15 − 20"   ) (td "Incline Dumbbell Shrug"))
+     (tr (td "2 × 15"        ) (td "Reverse Pec Deck"))
+     (tr (td "3 × 10 − 12"   ) (td "Curl-Bar Curls"))))
+   (h5 "Music")
+   (p "I don't really play or write music at the moment.")
+   (p "My parents signed me up for drum lessons when I was 10, and I did that until I
+was 18, eventually getting a summer job as a drum line instructor. I didn't have
+time to keep up with practicing when I went off to college.")
+   (p "I tried to pick up the electric guitar in 2020 as my \"pandemic hobby\", but
+stopped a few months in because I was incredibly burned out with school and
+couldn't even find the five minutes to practice.")
+   (p "I love to " (em "listen") " to music, though, especially when I'm exercising or working. Old punk rock, in
+particular. My favorite bands are the Descendents, Black Flag, and Minor
+Threat.")
+   (h4 "Technologies I use")
+   (p "My preferred software stack:")
+   (table
+    (tbody
+     (tr (td "Operating System") (td "Gentoo GNU/Linux"))
+     (tr (td "initd") (td "OpenRC"))
+     (tr (td "Shell") (td "Bash"))
+     (tr (td "Window Manager") (td "Awesome"))
+     (tr (td "Text Editor") (td "GNU Emacs"))
+     (tr (td "Email Client") (td "gnus"))
+     (tr (td "Web Browser") (td "eww, Mozilla Firefox"))
+     (tr (td "Torrent Client") (td "transmission-web"))
+     (tr (td "Keyboard Remapping") (td "xkeysnail"))
+     (tr (td "Version Control") (td "git"))
+     (tr (td "Hex Editor") (td "radare2"))
+     (tr (td "Disassembler") (td "NSA Ghidra"))))
+   (p "Humorously, I went: awesomewm → i3 → dwm → exwm → stumpwm → awesomewm")
+   (p "My Emacs configuration can be found "
+      ,(hyperlink "https://git.sr.ht/~jakob/.emacs.d" "here") ".")
+   (h5 "Machines (In-Commission)")
+   (h6 "Epsilon (Workstation)")
+   (p "I built this computer with my father when I was 12, and I still use it today.
+Of course, I've upgraded it a few times since then.")
+   (table
+    (tbody
+     (tr (td "Hardware") (td "Custom"))
+     (tr (td "•  CPU") (td "Intel(R) Core(TM) i5-2500 CPU @ 3.30GHz"))
+     (tr (td "•  GPU") (td "AMD Radeon RX 460 Graphics (POLARIS11)"))
+     (tr (td "•  RAM") (td "16GB DDR3"))
+     (tr (td "Operating System") (td "Gentoo GNU/Linux"))))
+   (h6 "Lambda (Laptop)")
+   (p "My daily driver. Despite the abnormal hardware, it works perfectly fine for all
+I use a computer to do.")
+   (table
+    (tbody
+     (tr (td "Hardware") (td "Pinebook Pro"))
+     (tr (td "Operating System") (td "Gentoo GNU/Linux"))))
+   (h6 "Phi (Server)")
+   (p "It's little more than a wireless hotspot at this point.")
+   (table
+    (tbody
+     (tr (td "Hardware") (td "Raspberry Pi 3 Model B"))
+     (tr (td "Operating System") (td "Gentoo GNU/Linux"))))
+   (h6 "Theta (Cellphone)")
+   (p "Blog post soon to come detailing my thoughts on this phone. So far, I like it
+enough to look past its rough edges.")
+   (table
+    (tbody
+     (tr (td "Hardware") (td "Pinephone Braveheart Edition"))
+     (tr (td "Operating System") (td "PostmarketOS (Phosh)"))))
+   (h5 "Other")
+   (p "I've a TL-SG105 as the switch for my bedroom and I wear a Casio CA-53W. The rest
+of my dragon's hoard is only in semi-regular use:")
+   (ul
+    (li "SeeedStudio BeagleBone Green")
+    (li "Raspberry Pi 2 Model B")
+    (li "Commodore 64")
+    (li "Commodore VIC-20")
+    (li "Nintendo Super Famicom")
+    (li "Nintendo 64")
+    (li "Sega Dreamcast"))
+   (h5 "Machines (Out-Of-Commission)")
+   (h6 "Upsilon (Laptop)")
+   (p "This was a nice piece of hardware, albeit incredibly bulky and having meager
+battery life.")
+   (table
+    (tbody
+     (tr (td "Hardware") (td "Lenovo Y50"))
+     (tr (td "• CPU") (td "Intel(R) Core(TM) i7-4700HQ @ 2.4 GHz"))
+     (tr (td "• GPU") (td "NVIDIA GTX-860M"))
+     (tr (td "• RAM") (td "8 GB DDR3"))
+     (tr (td "Operating System") (td "Gentoo GNU/Linux"))))
+   (h6 "Zeta (Cellphone)")
+   (p "This phone would be fine if it were capable of running something besides
+Android. It served me the few years where that wasn't an option.")
+   (table
+    (tbody
+     (tr (td "Hardware") (td "Huawei Honor 5x"))
+     (tr (td "Operating System") (td "LineageOS"))))
+   (h6 "Digamma (Server)")
+   (table
+    (tbody
+     (tr (td "Hardware") (td "Raspberry Pi 2 Model B"))
+     (tr (td "Operating System") (td "Gentoo GNU/Linux"))))
+   (h4 "Other Bits and Pieces")
+   (p "In general, I dislike politics, and don't associate with any broad political
+categorization. I'm registered as an independent voter in the state of
+Massachusetts. In terms of issue-specific stances, I'm a vocal supporter of open
+access and the free software movement.")
+   (p "I am a licensed (general class) ham, but I am rarely active. My callsign is
+KC1KAS.")))

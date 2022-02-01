@@ -1,0 +1,181 @@
+#+TITLE: Understand Game Hacking In One Post
+#+DATE: <2017-09-05 Tue 15:06>
+#+TAGS: tutorial, reverse-engineering, video-games, game-hacking, x86, c++, radare2
+
+At a first glance, it might seem that game cheats like [[https://github.com/AimTuxOfficial/AimTux][AimTux]] are something that
+could only be conjured by the most talented of reverse engineers. That was at
+least my initial view on it, especially since I always saw these game hackers
+using outlandish terms that I hadn't heard in over a year of playing in CTF's.
+Don't be fooled; game hacking isn't nearly as complex as its community makes it
+seem. In this post, I will explain the concepts in a way that is familiar to
+people with experience in binary exploitation and reverse engineering, but it
+shouldn't be too hard to understand if you lack that background.
+
+You want to know the secret of game hacking? Editing memory. Much can be
+accomplished with nothing more than a few writes to process memory. This should
+be unsurprising if you've used Cheat Engine, scanmem, or even the Game
+Genie. Memory editing, despite the fact that much is nowadays validated on the
+server, remains king in the cheat market. Reading and writing memory be your
+primitives, and I'll show you just how effective they can be by walking you
+through a basic wallhack for CS:GO. I choose Counter-Strike as an example,
+because there is a wealth of information out there, and it has an active
+commmunity constantly hacking on it. In case you want to go forth and do more on
+your own, y'know?
+
+First, I should explain the two methods of editing process memory. Developers of
+game hacks refer to the methods as "internal" and "external", where internal
+means a dynamic library that gets injected into the game's address space, and
+external means a separate process that manipulates memory by means of the
+operating system. [[https://github.com/AimTuxOfficial/AimTux][AimTux]] is an example of an internal hack, and [[https://gitgud.io/vc/vcaim][vcaim]] is an
+example of an external hack. We'll be writing an external cheat in this blog
+post. Although, if you want to learn more about writing internal cheats on
+Linux, [[https://aixxe.net/2016/09/linux-skin-changer][this blog post by Aixxe]] is excellent.
+
+Next, there's some terminology that people use when talking about
+memory-manipulating cheats. "Offsets," and "signatures." If you've ever
+performed a ret2libc attack on a system with ASLR, you already know about
+offsets. It's just a number you add to the address at which a library was loaded
+to get the position of something in memory. In the case of ret2libc, you're
+trying to get to a function like =system(3)=, but in the case of CS:GO hacks,
+you're trying to get to get something like a list of entities currently in the
+game. You can try to find functions, too, which we'll be doing in this post to
+write wallhacks, but most legit CS:GO hacks go after entity data.
+
+Games get updated and therefore recompiled quite often, so offsets are
+constantly changing. To combat this, cheat developers developed ways to scan for
+"signatures" in memory. That is, patterns of bytes that will reveal the offset -
+either by being around the desired offset, or being code that references it. If
+you get signatures from someone, it will probably look like "B9 ? ? ? ? 6A 00 FF
+50 08 C3". Those are hexpairs, and the question marks are bytes that get ignored
+because they're an address or something that will likely end up changing in a
+future update.
+
+Oh yeah, probably should've mentioned why we're using offsets instead of fixed
+addresses. It /is/ because of ASLR - a lot of CS:GO's code is stored in shared
+libraries. Specifically, =client_client.so= and =engine_client.so=. Where these
+are depends on whether you're using an amd64 or an x86 processor. Just use
+=find(1)= in the Steam directory, man.
+
+As a heads up, this cheat is mostly a [[https://aixxe.net/2017/06/kernel-game-hacking][paste I stole from Emma]]. I didn't come up
+with it myself, but I thought that it was simple enough to be an example for
+this post.
+
+The way we're going to go about writing our wallhack is pretty primitive,
+patching the =.text= segment. Although we're going to do this by editing memory,
+not the binary on disk. In CS:GO, there's a "glow" effect that spectators have -
+allowing them to see the outlines of other players in gamemodes like Casual. If
+we can find the offset to the code that checks if we're a spectator or not and
+patch it, we can enable the glowing effect and see through walls.
+
+The glow effect is also controlled by a "cvar," which is just a client-side
+configuration variable. Specifically, it checks "spec_show_xray". If we open up
+=client_client.so= in radare2, we can see that that's a plain ASCII string and
+that there are two references to it in the =.text= segment.
+
+#+BEGIN_SRC
+[0x005eef60]> iz~spec_show_xray
+vaddr=0x0135c245 paddr=0x0135c245 ordinal=3016 sz=15 len=14 section=.rodata type=ascii string=spec_show_xray
+[0x005eef60]> iS
+[Sections]
+...
+idx=11 vaddr=0x005eef60 paddr=0x005eef60 sz=13998500 vsz=13998500 perm=--r-x name=.text
+...
+
+40 sections
+
+[0x005eef60]> e search.from=0x005eef60
+[0x005eef60]> e search.to=0x005eef60+13998500
+[0x005eef60]> /r 0x0135c245
+[0x01348878-0x01348904] data 0x6236aa leaq str.spec_show_xray, %rsi in unknown function
+data 0x71817c leaq str.spec_show_xray, %rsi in unknown function
+#+END_SRC
+
+If we seek to the first one, we'll see a dissasembly listing like this
+
+#+BEGIN_SRC asm :hl_lines 0
+0x00623690      4c8d0de9c664.  leaq 0x00c6fd80, %r9
+0x00623697      b980000800     movl $0x80080, %ecx
+0x0062369c      4c8d05c5fdd9.  leaq 0x013c3468, %r8        ; "If set to 1, you can see player outlines and name IDs through walls - who you can see depends on your team and mode"
+0x006236a3      488d159af1d3.  leaq 0x01362844, %rdx       ; "0"
+0x006236aa      488d35948bd3.  leaq 0x0135c245, %rsi       ; "spec_show_xray"
+0x006236b1      488d3d080df6.  leaq 0x065843c0, %rdi
+0x006236b8      e8c3278e00     callq 0xf05e80
+#+END_SRC
+
+This is how cvars are "constructed" in the source engine. %rdi contains the
+address of the actual variable, which is at =0x065843c0=. This is done so that
+the variable can be changed from the in-game console, if the player so desires.
+But what this means for us is that we can easily find the address of a cvar in
+memory. If we look for references to that address, we'll find a handful.
+
+#+BEGIN_SRC
+[0x006236aa]> /r 0x065843c0
+[0x01348782-0x01348904] data 0x6236b1 leaq 0x065843c0, %rdi in unknown function
+data 0x6236c3 leaq 0x065843c0, %rsi in unknown function
+data 0x7b7f57 movq 0x01bd5180, %rdi in unknown function
+data 0x7b901b movq 0x01bd5180, %rbx in unknown function
+data 0xc5ac60 movq 0x01bd5180, %rax in unknown function
+data 0xc664d4 leaq 0x065843c0, %rax in unknown function
+data 0xc7e86c leaq 0x065843c0, %rax in unknown function
+data 0xc8bc34 movq 0x01bd5180, %rax in unknown function
+data 0xd78699 movq 0x01bd5180, %rax in unknown function
+data 0xda8601 movq 0x01bd5180, %rax in unknown function
+data 0xda9d0f movq 0x01bd5180, %rax in unknown function
+data 0xe3db40 movq 0x01bd5180, %rax in unknown function
+#+END_SRC
+
+A little of trial and error, combined with looking at the [[https://www.unknowncheats.me/forum/counterstrike-global-offensive/212843-mac-binaries-symbols.html][OSX binaries with
+symbols]], yields that =0xc664d4= is the address that we're looking for - the
+function responsible for glowing.
+
+#+BEGIN_SRC asm :hl_lines 0
+0x00c664c0      e80be7b3ff     callq 0x7a4bd0
+0x00c664c5      84c0           testb %al, %al
+0x00c664c7      0f84c3010000   je 0xc66690
+0x00c664cd      488b3d24df91.  movq 0x065843f8, %rdi       ; [0x65843f8:8]=0
+0x00c664d4      488d05e5de91.  leaq 0x065843c0, %rax
+0x00c664db      4839c7         cmpq %rax, %rdi
+...
+#+END_SRC
+
+That first call is the actual check, the symbol for it in the OSX binaries is
+"CanSeeSpectatorOnlyTools". So if we patch the jump at =0x00c664c7=, we should
+be able to see the glow effect as long as "spec_show_xray" is set to 1.
+
+This is pretty easy, since we just need to change 6 bytes. I initially
+considered using =dd(1)= for this, but it doesn't seem to like touching procfs
+mem files, so instead we'll edit it from a python REPL.
+
+#+BEGIN_SRC
+[jakob@Epsilon ~]$ sudo grep -i client_client.so /proc/$(pidof csgo_linux64)/maps
+7f5029915000-7f502b0e4000 r-xp 00000000 08:12 41426690                   csgo/bin/linux64/client_client.so
+7f502b0e4000-7f502b2e4000 ---p 017cf000 08:12 41426690                   csgo/bin/linux64/client_client.so
+7f502b2e4000-7f502b571000 rw-p 017cf000 08:12 41426690                   csgo/bin/linux64/client_client.so
+[jakob@Epsilon ~]$ sudo python
+Python 3.6.2 (default, Jul 20 2017, 03:52:27)
+[GCC 7.1.1 20170630] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> OFF = 0x7f5029915000 + 0x00c664c7
+>>> with open("/proc/9052/mem", "wb") as mem:
+...     mem.seek(OFF)
+...     mem.write(b"\x90" * 6)
+...
+139982284502215
+6
+>>>
+#+END_SRC
+
+And it seems to work pretty well. I know I didn't go into a whole lot of depth
+about how you would actually come up with a cheat like this, but the reality is
+that a lot can be figured out using some basic reverse engineering skills. You
+already saw how much information leakage there is from a simple string
+reference. There's a lot of information out there already, including the source
+code for the [[https://github.com/ValveSoftware/source-sdk-2013][Source 2013 Base]]. I'd also recommend taking a look at the
+[[https://www.unknowncheats.me/forum/index.php][UnknownCheats]] community if you're interested in learning more, they're
+(generally) helpful and quite friendly.
+
+
+Further Reading:
+
+- [[https://www.unknowncheats.me/forum/counterstrike-global-offensive/169923-cs-cheat-rookie-rookies.html][CS:GO Cheat-Making: From a rookie to rookies]]
+- [[https://www.unknowncheats.me/forum/general-programming-and-reversing/133228-implement-pattern-scanning-obtain-offsets-dynamically.html][How to implement pattern-scanning to obtain offsets dynamically]]

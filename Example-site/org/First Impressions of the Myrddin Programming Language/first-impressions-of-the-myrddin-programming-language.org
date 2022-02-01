@@ -1,0 +1,412 @@
+#+TITLE: First Impressions of the Myrddin Programming Language
+#+DATE: <2020-01-05 Sun 18:38>
+#+TAGS: opinion, programming, myrddin
+
+It's been [[http://jakob.space/blog/first-impressions-of-the-rust-programming-language.html][over a year]] since I last wrote about contenders for the throne that C
+currently sits upon, so I'll spare you the prosy introduction and cut to the
+chase. I'd like to share some thoughts on my recent foray into a little
+programming language I came across while browsing [[https://lobste.rs/][lobste.rs]] some years ago:
+[[https://myrlang.org/][Myrddin]], the pet project of [[https://eigenstate.org/][Ori Bernstein]]. From the language specification,
+"Myrddin is designed to be a simple programming language. It is designed to
+provide the programmer with predictable behavior and a pragmatic set of
+semantics, providing the benefits of strong type checking, generics, type
+inference, and modern features with a high cost-benefit ratio. Myrddin is not a
+language designed to explore the forefront of type theory or compiler
+technology. Its focus is on being a practical, small, well defined, and easy to
+understand language for work that needs to be close to the hardware. Myrddin is
+influenced strongly by C and ML, with ideas from too many other places to name."
+The front page of the website specifically states that "[i]t aims to fit into a
+similar niche as C, but with fewer bullets in your feet." I see these
+descriptions and the cat-v-inspired stylesheets as a warning to those who don't
+appreciate a spartan attitude towards software development.[fn:2] Fortunately,
+I'm not one of those people.
+
+Like last time, I'll be getting my hands dirty using the language to implement
+something nontrivial. There aren't many other applications written in Myrddin;
+the [[https://eigenstate.org/software/ircmyr][irc.myr]] IRC client is the only real example I was able to find.[fn:3] It
+seems most of the work has gone towards developing libraries.
+
+It took a restless night for me to come up with a project for my exploration. I
+took a peek at the [[https://myrlang.org/wishlist][wishlist]], but nothing on it stood out to me. My choices were
+restricted somewhat by the limited architecture support: I wanted to work on a
+lightweight [[https://en.wikipedia.org/wiki/Imageboard#Danbooru-style_boards][Booru]] engine to use as a self-hosted tagged image gallery, but my
+"server"[fn:1] is ARMv6, so I wouldn't have been able to use it myself. Oh well.
+The next language I plan to write about uses LLVM as a backend, so I'll have my
+opportunity then. Some of the other ideas I toyed with were a text editor and a
+Lisp interpreter[fn:5], but I settled on hacking together a CHIP-8 emulator.
+That demands some sort of graphical output, so it should be a good opportunity
+to demonstrate the C binding support. There's plenty of room to go above the
+bare-minimum for features, too, like implementing an assembler, debugger, or
+JIT. (I only ended up doing the first of those). Furthermore, it would be (to my
+knowledge) the first graphical application writen in Myrddin, and I figure that
+a CHIP-8 emulator of my own would be good to have, because if I ever decide to
+write a "toy" compiler, CHIP-8 machine code would make for a fun target. But
+before we can start writing an emulator, though, we've got to read the docs.
+
+* Documentation
+
+The language is niche enough that search engine indexing is a problem, but
+documentation does exist. The website has a [[https://myrlang.org/tutorial][tutorial]], a [[https://myrlang.org/doc/index.html][library reference]], and a
+[[https://myrlang.org/spec.html][language specification]]. There's also an [[https://myrlang.org/playground][online compiler]], which seems to be the
+trendy™ thing to do nowadays. Jesting aside, I do really appreciate that there's
+an easy way to hop in and start messing with the language. I do have a some
+complaints, though. First, the workings of the memory model are only mentioned
+offhandedly in a few spots. With some effort and prior experience writing C, you
+can figure it out, but when I'm working with a systems programming language, I
+like to understand the lifetimes of my variables. This was incredibly
+frustrating when I wrote the assembler for chip; I was constantly dealing with
+strings being emptied beneath my feet. My other complaint is that the C binding
+interface, despite being presented as a feature on the front page, is mentioned
+literally nowhere in the documentation.[fn:4] It took some digging in the
+mailing lists to find the [[https://eigenstate.org/archive/myrddin-dev/2015-Oct/0000002.html][only explanation]] of how to use it.
+
+* Tooling
+
+There's a [[https://git.eigenstate.org/ori/vim-myr.git/][configuration for vim]] and a [[https://github.com/refi64/howl-myr][bundle for howl]], but I don't use either,
+so I wrote my own [[https://git.sr.ht/~jakob/myrddin-mode][major mode]] for GNU Emacs. It's... not great. This is the first
+time I've written a major mode, but it still makes for a nicer experience than
+writing programs in =fundamental-mode=. There's also support for Myrddin in Ori's
+[[https://git.eigenstate.org/ori/ctags-myr.git/][fork of ctags]]. So... yeah. The tooling for /writing/ Myrddin is underwhelming, but
+that's mostly a result of the project's size. There are other parts of the
+tooling that are worth remarking on, though.
+
+* Build System
+
+In true Unix fashion, different parts of the compilation process are broken up
+into separate programs. =6m= is the compiler (for AMD64), =muse= is used for symbol
+relocation when working with packages, and the good ol' =as= and =ld= on your system
+are conscripted to finish the job. This is all orchestrated by the build system
+for Myrddin, [[https://myrlang.org/mbld/][mbld]], which I feel strikes a nice balance between utility and
+simplicity. Everything is defined in a =bld.proj= file at the root of your source
+tree, and the syntax is remarkably similar to the Myrddin language itself.
+Here's the setup for chip:
+
+#+BEGIN_SRC myrddin
+bin asm =
+	asm.myr
+;;
+
+bin chip =
+	main.myr
+	lib sdl
+;;
+
+lib sdl =
+	sdl.myr
+	sdl.glue.c
+;;
+#+END_SRC
+
+Targets are declared by listing the inputs that comprise them. In this case, the
+executable for our CHIP-8 assembler, =asm=, is made from the =asm.myr= source file,
+and the executable for our CHIP-8 emulator, =chip= is made from the =main.myr=
+source file and the =sdl= library, which in turn is made from =sdl.myr= and
+=sdl.glue.c=. There are actually quite a few target types supported by mbld (=gen=,
+in particular, got me excited, even though I didn't have anything to use it for
+at the time). Part of me wishes this was more general-purpose, because I'd use
+this as a =make= replacement in a heartbeat if I could.
+
+Oh, also, if you're on Gentoo, you can install all of these from my [[https://git.sr.ht/~jakob/zerodaysfordays][overlay]]. The
+compiler and friends are packaged under =dev-lang/myrddin=.
+
+The compiler leaves a bit to be desired, though.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~/Code/chip $ mbld -b asm asm.myr && ./asm
+	6m asm.myr
+asm.myr:52: type "char" incompatible with "byte" near Otup:(union
+	`std.None
+	`std.Some byte[:]
+;;,byte[:][:])
+	char from asm.myr:24
+	byte from asm.myr:8
+FAIL: 6m asm.myr
+#+END_SRC
+
+Compiler error messages are _really_ hard to get right. They're not something I'd
+expect a small project like this to nail, so complaining about it feels like
+yelling at my houseplant for not making me dinner, but it does get old fast.
+Here's another one, in response to trying to invoke =.len= on an array instead of
+a slice.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~/Code/chip $ mbld -b asm asm.myr
+	6m asm.myr
+6m: typeinfo.c:363: tyoffset: Assertion `ty->type == Tystruct' failed.
+CRASH: 6m asm.myr
+#+END_SRC
+
+If you ponder on this for long enough, it /kind of/ makes sense. Y'know, the =.=
+dereferencing operator is typically used for structs, and I just introduced some
+code that uses that, so maybe that's the issue. But notice that we don't even
+have a line number in =asm.myr=. Not a fun thing to track down.
+
+There are a couple of hard-to-reproduce compiler bugs as well. Take this snippet:
+
+#+BEGIN_SRC myrddin
+use std
+use sdl
+
+const main = {
+    var win, r, tex
+    var pixels : uint8[64 * 32]
+    sdl.init(sdl.INIT_VIDEO)
+    win = sdl.mkwin(("chip!\0" : byte#), sdl.WIN_POS_UNSPEC, sdl.WIN_POS_UNSPEC, 640, 480, sdl.WIN_OPENGL)
+    r = sdl.mkrenderer(win, -1, sdl.RENDERER_ACCEL)
+    tex = sdl.mktexture(r, sdl.PIXFMT_RGB332, sdl.TEXACCESS_STREAM, 64, 32)
+
+    var i
+    for i = 0; i < 64 * 32; i++;
+        pixels[i] = (i % 256)
+    ;;
+
+    sdl.update(tex, (pixels[:] : void#), 64)
+    sdl.copy(r, tex)
+    sdl.present(r)
+    
+    sdl.delay(1000)
+    
+    sdl.freerenderer(r)
+    sdl.freewin(win)
+    sdl.quit()
+}
+#+END_SRC
+
+#+BEGIN_SRC prog
+      6m -O obj -I obj main.myr
+/tmp/tmp5e0bdad78953-main.myr.s: Assembler messages:
+/tmp/tmp5e0bdad78953-main.myr.s:99: Warning: 256 shortened to 0
+/tmp/tmp5e0bdad78953-main.myr.s:103: Error: can't encode register '%ah' in an instruction requiring REX prefix.
+/tmp/tmp5e0bdad78953-main.myr.s:125: Warning: 2048 shortened to 0
+Couldn't run assembler
+CRASH: 6m -O obj -I obj main.myr
+#+END_SRC
+
+It compiles fine if you replace the =(i % 256)= with something that doesn't
+involve the modulo operator. I came across a handful of issues like this when
+writing chip. If you do a =Ctrl+F= for "HACK" in [[https://git.sr.ht/~jakob/chip/tree/master/main.myr][main.myr]], you'll see everywhere I
+had to get creative to avoid triggering a compiler bug. Again, though, I'm
+asking a lot of a small project when I complain about issues like these.
+
+* Language Features
+
+With that out of the way, I suppose it's time to see if Myrddin really is the
+practical, small, well defined, and easy to understand language it hopes to be.
+If you'd like to look at code I wrote to experiment with these features, the
+repository is [[https://git.sr.ht/~jakob/chip][here]]. I chose the name 'chip' as a reference to the bland names
+chosen for the [[http://man.9front.org/1/nintendo][emulators provided with 9front]], since Myrddin seems like the kind
+of thing that would appeal to those folks.
+
+** Syntax
+
+I dig it! The parser deals with logical lines, so semicolons aren't necessary,
+but can be used in place of a newline if desired. It ends up feeling a bit like
+Go. The only control flow constructs in Myrddin are =if/elif/else=, =while=, and
+=for=. I suppose there's =goto= as well, but I haven't had a good reason to use that
+yet. =elif= is a cute nod to (presumably) Python. The convenience I'm most
+thankful for is the support for tuple destructuring.
+
+#+BEGIN_SRC myrddin
+var a, b
+(a, b) = (1, 2)
+std.put("a: {}, b: {}\n", a, b)
+#+END_SRC
+
+#+BEGIN_EXPORT html
+<div class="mastodon">
+    <iframe height="180" src="https://icosahedron.website/@technomancy/103359833068002215/embed"></iframe>
+</div>
+#+END_EXPORT
+
+** Scoping
+
+Right off the bat, we're doing better than C. Declarations can appear in any
+order, and can be used at any point where they're in scope. In other words,
+function prototypes are unnecessary.
+
+Variable shadowing is half-way there. This works:
+
+#+BEGIN_SRC myrddin
+var a = 1
+if true
+	var a = 2
+;;
+std.put("{}\n", a) // Prints "1".
+#+END_SRC
+
+But with this, the compiler throws a fit about "pattern shadows variable
+declared near a:int".
+
+#+BEGIN_SRC myrddin
+var a = 1
+match 1
+| a: std.put("{}", a)
+;;
+std.put("{}", a)
+#+END_SRC
+
+** Closures
+
+Yep, there's support for lexical closures. It's rockin'. What's interesting is
+that there isn't a special syntax for declaring functions. Instead, you assign
+function literals to symbols.
+
+A minor point, but returning early from a function in Common Lisp is enough of a
+pain in the rear that I'd like to point it out here. Myrddin supports multiple
+points of exit from a function.
+
+#+BEGIN_SRC myrddin
+const factorial = {n
+        if n < 1
+                -> 1
+        ;;
+        -> n * factorial(n - 1)
+}
+#+END_SRC
+
+Of course =if= being an expression in Common Lisp makes =factorial= trivial to
+implement without any early-return constructs, but you get the point.
+
+** Type System
+
+One difference between Myrddin and some other languages with type inference like
+Rust is that Myrddin doesn't require that arguments have a type specifier. This
+is valid Myrddin code:
+
+#+BEGIN_SRC myrddin
+use std
+
+const factorial = {n
+	if n < 1
+		-> 1
+	;;
+	-> n * factorial(n - 1)
+}
+
+const main = {
+	std.put("{}! = {}\n", n, factorial(n))
+}
+#+END_SRC
+
+It does start to fall apart if you have unused functions that are more
+complicated than the =factorial= example, but for the most part, you can get away
+without giving any type specifiers, which is nice.
+
+There's also support for algebraic data types (with all of your favorites in
+=std=, like =std.result=) and pattern matching, which is capable of descending into
+the structure of practically any type. Even "pointer chasing," or matching on
+the value referenced by a pointer. There's a neat syntax for referring to ADT
+variants with backticks, which I think does wonders for readability. The only
+beef I have is that I was yearning for an =if let=-type construct the whole time,
+but that's a minor point.
+
+Aside from that, I don't have many comments about the type system. I appreciate
+the support for fixed-width integer types and tuples, and I'm glad that there's
+support for generics (with traits, =impl=, et al.), even if it isn't something I
+used extensively when writing chip.
+
+After working with Rust, being given access to raw pointers in Myrddin feels
+like getting a BB gun for Christmas. They're a bit funky, though. You have to go
+out of your way to do pointer arithmetic, which is probably a good thing.
+
+The syntax for array literals is pretty neat, too. You can selectively
+initialize certain indices like =x = [0: 1, 73: 2]=.
+
+** Package System
+
+[[https://eigenstate.org/notes/myrmodules][The Myrddin module system is simple and easy to understand. There simply isn't
+much to it.]] Really, though, they're little more than a =pkg= clause listing all of
+the declarations to be exported. Here's the =pkg= for my SDL2 wrapper:
+
+#+BEGIN_SRC myrddin
+pkg sdl =
+	const INIT_VIDEO : uint32 = 32
+
+	extern const init : (flags : uint32 -> int)
+	extern const quit : (-> void)
+
+	type win = void#
+
+	const WIN_POS_UNSPEC : int = 536805376
+	const WIN_OPENGL : uint32 = 2
+
+	extern const mkwin : (title : byte#, x : int, y : int, w : int, h : int, flags : uint32 -> win)
+	extern const freewin : (win : win -> void)
+
+	type renderer = void#
+
+	const RENDERER_ACCEL : uint32 = 2
+
+	extern const mkrenderer : (win : win, index : int, flags: uint32 -> renderer)
+	extern const copy : (r : renderer, tex : texture -> int)
+	extern const present : (r : renderer -> void)
+	extern const freerenderer : (r : renderer -> void)
+
+	type texture = void#
+
+	const PIXFMT_RGB332 : uint32 = 336660481
+	const TEXACCESS_STREAM : int = 1
+
+	extern const mktexture : (r : renderer, fmt : uint32, access : int, w : int, h : int -> texture)
+	extern const update : (tex : texture, pixels : void#, pitch : int -> int)
+	extern const freetexture : (tex : texture -> void)
+
+	extern const delay : (ms : uint32 -> void)
+
+	const SCANCODE_1 : uint8 = 30
+	const SCANCODE_2 : uint8 = 31
+	const SCANCODE_3 : uint8 = 32
+	const SCANCODE_4 : uint8 = 33
+	const SCANCODE_Q : uint8 = 20
+	const SCANCODE_W : uint8 = 26
+	const SCANCODE_E : uint8 = 8
+	const SCANCODE_R : uint8 = 21
+	const SCANCODE_A : uint8 = 4
+	const SCANCODE_S : uint8 = 22
+	const SCANCODE_D : uint8 = 7
+	const SCANCODE_F : uint8 = 9
+	const SCANCODE_Z : uint8 = 29
+	const SCANCODE_X : uint8 = 27
+	const SCANCODE_C : uint8 = 6
+	const SCANCODE_V : uint8 = 25
+	const SCANCODE_ESC : uint8 = 41
+
+	extern const getkbd : ( -> uint8[256]#)
+;;
+#+END_SRC
+
+Packages are imported with a =use= clause, and relative imports are supported if
+the package name is wrapped in double quotes.
+
+* Standard Library
+
+It's very nice. You'll be using =libstd= and =libbio=, the buffered input/output
+library, mostly, but there's support for dates, HTTP, INI parsing, JSON, regular
+expressions, threading, and making system calls, all out of the box.
+
+=libstd= provides the basic I/O functions we all expect, which work with format
+specifiers that are simpler than but similar to Rust's. They look like this:
+
+#+BEGIN_SRC myrddin
+std.put("{} + {} = {}\n", 2, 2, 5)
+#+END_SRC
+
+There's a [[https://myrlang.org/doc/libtestr/][unit testing library]]. It isn't awful, but it isn't particularly wieldy
+either. The example at the bottom of that page was enough to discourage me from
+taking a TDD-style approach with chip.
+
+* Conclusion
+
+I like Myrddin a lot, and I feel it lives up to its promises of being practical
+and small. But at the end of the day, I don't think I'll be using it until it's
+matured some more -- the limited architecture support and frustrating compiler
+bugs are enough to turn me off. I'm hopeful, though. There's work underway to
+write a self-hosted compiler using [[https://c9x.me/compile/][QBE]] as a backend, and we're only at release
+0.3.0, so I'm certain the situation with tooling should improve in time. Maybe
+this is my cue to quit whining and get hacking. See ya on the mailing lists!
+
+[fn:1] At the moment, a Raspberry Pi B+. It does the job, but I'm afraid of blowing the 512MB RAM trying to run a full MediaGoblin instance on it.
+[fn:2] Hell, the tutorial recommends limiting lines to 60 characters in length.
+[fn:3] It's worth mentioning that irc.myr is /really/ impressive for what it is. It uses native [[https://git.eigenstate.org/npnth/libtermdraw.git/tree][terminal drawing library]] instead of ncurses, and the interface is probably the best out of any of these irssi-like clients. If I weren't so enamored with [[https://en.wikipedia.org/wiki/ERC_(software)][ERC]], I'd probably be using it as my daily driver. Also, I wrote this sentence prior to discovering that [[https://github.com/andrewchambers/qc][qc]] was written in Myrddin -- that's another example of a program written in Myrddin worth looking at.
+[fn:4] I still maintain this complaint because it's true of the official documentation, but I need to give Ori a break here: in editing this article, I came across the page on his personal website describing it. See "[[https://eigenstate.org/notes/mcbind.html][Automatic C Binding Generation for Myrddin]]". I didn't use mcbind for the SDL binding library I put together because I thought function names like =sdl.SDL_UpdateTexture= would stick out like a sore thumb among the surrounding Myrddin code.
+[fn:5] After posting this, [[https://mastodon.sdf.org/web/accounts/225228][wasamasa]] reached out to me with his attempt at a [[https://github.com/wasamasa/mal-candidates/tree/master/myrddin][Lisp interpreter]] in Myrddin. I had a fun time reading through what's there, so I figured I'd drop a link to it. Be sure to look at =notes.md=.

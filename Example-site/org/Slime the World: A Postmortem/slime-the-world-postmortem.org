@@ -1,0 +1,320 @@
+#+TITLE: Slime the World: A Postmortem
+#+DATE: <2018-11-02 Fri 08:27>
+#+TAGS: writeup, video-games, programming, game-development, lua, lisp, fennel
+
+[[https://itch.io/jam/autumn-lisp-game-jam-2018/rate/321822][Slime the World]] was my entry to this year's [[https://itch.io/jam/autumn-lisp-game-jam-2018][Autumn Lisp Game Jam]], and it managed
+to win second place. The theme was slime, so it’s a game about covering
+everything in sight with slime, and the dialect of Lisp I chose to use was
+[[https://fennel-lang.org/][Fennel]], a simple and elegant Lisp that I feel perfectly matches the simplicity
+and elegance of Lua. It takes on a more "modern" style that I associate with
+Lisps such as Clojure. I had initially pushed Clojure to the side, feeling it
+was too different from Common Lisp, but now that I've had a positive firsthand
+experience with a Lisp where lists /aren't/ the data structure you always reach
+for, I'm hoping to return to it with an open mind.
+
+When I signed up, I thought that the ten-day deadline was lax compared with some
+of the more well-known jams like [[https://ldjam.com/][Ludum Dare]]. Being given ten days to complete a
+submission was certainly more permissive than two would have been, but I found
+that participating in a game jam and simultaneously juggling coursework from
+university was challenging. To me, the point of a short deadline is so that you
+can sit down and focus on nothing but developing the game for the stretch of the
+jam, but even dedicating one weekend to working on the game felt irresponsible
+when I had papers to write, problem sets to grind, and exams to study for. I
+actually made myself submit the entry two days before the deadline so that I
+wouldn't be working on it when I went home to visit my family this past weekend.
+I had fun, though, didn't fall behind in my academics, and still had plenty of
+time to spend with the people I love most.
+
+All in all, I'm very happy with my decision to participate. This was my first
+game jam, and I think given the smaller size and relatively laid back
+atmosphere, it was a wise choice for first jam. The dynamic nature of Lisp made
+for a pleasant game development experience, I had an opportunity to try my hand
+at sprite work in GIMP, and this is the first time I can say that I've
+"finished" one of my games! I've made plenty of prototypes (which I now feel
+inspired to return to and write a blog post about), but they never graduated
+past the prototype stage. This reminds me of a point in [[https://www.youtube.com/watch?v=jGjq-C5cj2c&list=PLRDhcp_8c7uAPQfE6WMBo7PCNlkQIOLdO&index=5&t=0s][an entry to
+3kliksphilip's "The Game Making Journey"]], which I took to be a suggestion to
+finish at least one relatively basic game before starting on something huge and
+deep[fn:1]: "I had no idea what people wanted from my proper games, like Sundown
+Shambles or Don't Look Down, which were still not getting positive reviews even
+after weeks of development - to me these were perfect, or at least a lot closer
+to that status than other peoples' games and I had no idea of how I was supposed
+to improve on them further. I learned that I should build things from the ground
+up, getting it to work on a basic level before elaborating on it, rather than
+starting with some obscure or absurdly complex idea and shoe-horning it into
+something that people could play, relying on depth to compensate for lack of
+balance or fun." In my case, those prototypes never went anywhere because I
+wasn't focused on getting a simple base that was engaging, I had an
+underdeveloped vision of gameplay and tried to implement the entire thing at
+once, which inevitably led to me giving up.
+
+Surprisingly, one of the highlights for me was actually adapting [[https://en.wikipedia.org/wiki/Flood_fill][flood fill]] to
+figure out how many surfaces in the map can be slimed. It's a pleasingly simple
+algorithm, but until now, I've never had a reason to implement it. The following
+isn't the code that's actually used in the game - it's been *significantly*
+cleaned up, and works on maps made from text-based tiles instead of the
+structures that the game uses to represent tiles, but I'm including a little
+code walkthrough because I really just admire the simplicity of the algorithm.
+It's also decoupled from the game code if you want to run it yourself, just make
+sure [[https://raw.githubusercontent.com/rxi/lume/master/lume.lua][lume.lua]] is present.
+
+#+BEGIN_SRC fennel :hl_lines 0
+(local lume (require :lume))
+
+(fn index-out-of-bounds [world x y]
+  (or (< y 0) (>= y (# world))
+      (< x 0) (>= x (# (. world (+ y 1))))))
+
+(fn tile-at [world x y]
+  (when (index-out-of-bounds world x y)
+    (error (string.format "(%d, %d) is out of bounds" x y)))
+  (. world (+ y 1) (+ x 1)))
+
+(fn iter-tiles [world]
+  (var x 0)
+  (var y 0)
+
+  (let [height (# world)]
+    (fn []
+      (if (< y height)
+          (let [last-x x
+                last-y y
+                tile (tile-at world x y)
+                width (- (# (. world (+ y 1))) 1)]
+            (if (>= x width)
+                (do
+                  (set x 0)
+                  (set y (+ 1 y)))
+                (set x (+ 1 x)))
+            (values last-x last-y tile))
+          nil))))
+
+;; Returns some tile in `world' of type `tile-type', or nil if no such tile is
+;; present.
+(fn find-any [tile-type world]
+  (var res nil)
+  (each [x y tile (iter-tiles world)]
+    (when (and (= tile tile-type) (not res))
+      (set res [x y])))
+  res)
+
+;; Returns whether or not `tile' exists in `checked'.
+(fn tile-checked [checked x y]
+  (lume.match checked
+              (fn [tile]
+                (let [(other-x other-y) (unpack tile)]
+                  (and (= x other-x)
+                       (= y other-y))))))
+
+;; Modified implementation of <https://en.wikipedia.org/wiki/Flood_fill>.
+(fn count-surfaces-recur [world x y checked]
+  (let [check-adjacent (fn [world x y checked]
+                         (if (index-out-of-bounds world x y)
+                             0
+                             (if (= " " (tile-at world x y))
+                                 (count-surfaces-recur world x y checked)
+                                 1)))]
+    (if (tile-checked checked x y)
+        0
+        (do (table.insert checked [x y])
+            (+ (check-adjacent world (+ x 1) y checked)
+               (check-adjacent world (- x 1) y checked)
+               (check-adjacent world x (+ y 1) checked)
+               (check-adjacent world x (- y 1) checked))))))
+
+;; Returns the number of slime-able surfaces in the given grid of tiles.
+(fn count-surfaces [world]
+  (let [seed (find-any " " world)]
+    (when seed
+      (let [(x y) (unpack seed)]
+        (count-surfaces-recur world x y [])))))
+
+(let [world [["█" "█" "█" "█"]
+             ["█" " " "█" "█"]
+             ["█" " " " " "█"]
+             ["█" " " " " "█"]
+             ["█" "█" "█" "█"]]]
+  (print (count-surfaces world)))
+#+END_SRC
+
+There are a few shortcomings of this implementation (chiefly, the map has to be
+one enclosed space, there can't be any "empty" tiles around the map's border),
+but for the purposes of a game jam entry, it did the job wonderfully. [[https://github.com/rxi/lume][=lume=]] is
+an excellent library that prides itself on being "geared towards gamedev," but
+as you can see from the code, it also provides some general iteration constructs
+that prove useful when programming in a more functional style. =tile-at= and
+=index-out-of-bounds= are just my mapping of cartesian coordinates onto a Lua
+array (which are indexed starting at 1, /not/ 0). =iter-tiles= provides an
+[[https://www.lua.org/pil/7.1.html][iterator]] over the text-based world structure I'm using, yielding an =x=, a =y=,
+and the =tile= for every addressable location in the world. It's more stateful
+than I'd like, and I know that Lua supports [[https://www.lua.org/pil/7.3.html][stateless iterators]], but I didn't
+really want to figure those out. Lisp is multi-paradigm, after all.
+
+All =count-surfaces= does is find a place for =count-surfaces-recur= to start,
+which is where the real meat of the algorithm is. As the name implies, it's
+recursive:
+
+1. If the tile's been checked already, stop and return 0.
+2. For each adjacent tile (one step north, west, east, and south), sum:
+  1. 1, if the tile is a wall (as that means we've hit one side of the tile)
+  2. The return value of =count-surfaces-recur= if it isn't a wall
+3. Return that sum.
+
+We're really just walking the map's empty space and keeping track of every time
+we hit the side of a tile. There are better ways to implement flood fill, but I
+think this is fairly easy to reason about and understand.
+
+Participating in the game jam taught me several lessons, and there are a few I
+would like to share with you:
+
+* The First Solution Doesn't Have To Be The Best Solution
+
+I find that, when I initially set out to write a blog post or something similar,
+I'm most effective if I direct my attention towards getting words down on paper
+and pay little mind to formatting or coherence. Both are easily addressed later
+on in the writing process, and having the words in a malleable medium gives me a
+framework to run with. This is different than the approach I typically take when
+programming, where I do a lot of planning in my head and strive to nail the most
+elegant solution on the first try. "Most elegant," being, of course, subjective.
+However, working within a strict deadline pushed me towards putting out some
+arguably "hackier" code, which in turn helped me to realize the usefulness of
+applying my "get words down on paper" methodology to programming. Allow me to
+elaborate with some examples.
+
+The first iteration of the code for updating the camera looked like this:
+
+#+BEGIN_SRC fennel :hl_lines 0
+;; Update camera.
+(set camera-x (lume.lerp camera-x (- swanky-x camera-lock-goal-x) dt))
+(set camera-y (lume.lerp camera-y (- swanky-y camera-lock-goal-y) dt))
+
+;; Lock camera so that it doesn't go out of bounds.
+(when (> 0 camera-x)
+  (set camera-x 0))
+
+(when (> 0 camera-y)
+  (set camera-y 0))
+
+(when (>= camera-x (- (* tile-width (- (. sandbox :width) 3)) screen-width))
+  (set camera-x (- (* tile-width (- (. sandbox :width) 3)) screen-width)))
+
+(when (>= camera-y (- (* tile-height (- (. sandbox :height) 2)) screen-height))
+  (set camera-y (- (* tile-height (- (. sandbox :height) 2)) screen-height)))
+#+END_SRC
+
+All of the variables you see above, with the exception of =dt=, are globally
+accessible and mutable. This is typically frowned upon in production code, but I
+think that for a first iteration, globals make the code easier to think about,
+and that's more effective for grounding the ideas that you have.
+
+Now that I was able to see which information was associated with which concepts
+in the code, I was able to replace the loose global variables with tables. This
+was the subsequent iteration:
+
+#+BEGIN_SRC fennel :hl_lines 0
+;; Update camera.
+(tset camera :x-pos (lume.lerp (. camera :x-pos)
+                               (- (. player :x-pos) camera-lock-goal-x) (* 4 dt)))
+(tset camera :y-pos (lume.lerp (. camera :y-pos)
+                               (- (. player :y-pos) camera-lock-goal-x) (* 4 dt)))
+;; Lock camera so that it doesn't go out of bounds.
+(when (> 0 (. camera :x-pos))
+  (tset camera :x-pos 0))
+
+(when (> 0 (. camera :y-pos))
+  (tset camera :y-pos 0))
+
+(let [max-x (- (* (. map :tiles :width) (. world :width)) screen-width)]
+  (when (>= (. camera :x-pos) max-x)
+    (tset camera :x-pos max-x)))
+
+(let [max-y (- (* (. map :tiles :height) (. world :height)) screen-height)]
+  (when (>= (. camera :y-pos) max-y)
+    (tset camera :y-pos max-y)))
+#+END_SRC
+
+I think this less readable, but again, much like with writing, formatting and
+coherence are things you can and should come back to. The current version of the
+game has more general function that abstracts this notion of updating the camera
+into a function that doesn't incur side effects.
+
+#+BEGIN_SRC fennel :hl_lines 0
+(fn focus-on-object [camera object dt]
+  (let [last-x (. camera :x-pos)
+        last-y (. camera :y-pos)
+        max-x (. camera :max-x)
+        max-y (. camera :max-y)
+        object-x (. object :x-pos)
+        object-y (. object :y-pos)
+        width (. object :width)
+        height (. object :height)
+        screen-width (. camera :screen-width)
+        screen-height (. camera :screen-height)
+        x-offset (math.floor (- (/ screen-width 2) (/ width 2)))
+        y-offset (math.floor (- (/ screen-height 2) (/ height 2)))
+        x (lume.lerp last-x (- object-x x-offset) (* 4 dt))
+        y (lume.lerp last-y (- object-y y-offset) (* 4 dt))
+        x (lume.clamp x 0 max-x)
+        y (lume.clamp y 0 max-y)]
+      (values x y)))
+#+END_SRC
+
+This version is still, in my opinion, "hacky." For one, the code is mostly field
+retrieval, and this could probably be broken up into smaller functions for
+clarity. I believe the reason for the upper bound on elegance was actually that
+I tried to refactor too early. I made the transition from global variables to
+tables within the first two days of the jam, so very few of the features in the
+final game had an initial implementation, and as such, I was lacking a complete
+"big picture" when designing the data layout.
+
+Writing this section, I was reminded of a snippet from a [[https://www.facebook.com/permalink.php?story_fbid=2110408722526967&id=100006735798590][Facebook post]] that was
+posted by one my idols, John Carmack: "I used a common pattern for me: get first
+results with hacky code, then write a brand new and clean implementation with
+the lessons learned, so they both exist and can be cross checked." I'm hoping to
+apply this to my future programming work. It's been said that "weeks of
+programming can save you hours of planning," but I think that getting some code
+down that works is an excellent precursor to the planning process.
+
+* Learn Your Tools Ahead Of Time
+
+I was fortunate enough to have experience with Lua prior to the jam, so the
+general concepts regarding tables and such weren't foreign, and I had guidance
+in the form of [[https://technomancy.us][Phil Hagelberg]]'s blog post[fn:2], [[https://technomancy.us/188]["in which a game jam is recounted
+further"]] and the source code to [[https://gitlab.com/technomancy/exo-encounter-667][EXO_encounter 667]]. Regardless, I didn't /learn/
+Fennel until the jam had started. This wasn't a huge deal, as Lisps are
+syntactically identical and I was able to pick it up without much trouble, but
+there were inevitably nuances, and I really wish that I had at least played
+around with Fennel in the days leading up to the jam. It took me four days to
+realize that bindings in a =let= form could refer to earlier bindings in that same
+form, much like the behavior of =let*= in Common Lisp. It also took time to get
+used to reaching for tables and booleans rather than conses, and I never learned
+how macros work in Fennel. To my understanding, they have to be declared in
+separate modules, and there is no backquote syntax. Again, things I could have
+figured out had I just used Fennel prior to writing a game with it.
+
+Also, I still do not know why, but [[https://gitlab.com/technomancy/fennel-mode][=fennel-mode=]] does not work with my Emacs
+configuration. Some =init.el= bisecting revealed that =(require 'package)=
+messed up fennel-mode's indentation function somehow. Whenever I worked on the
+game, I had to run a separate =emacs -q= and =eval-buffer= on =fennel-mode.el=.
+Fortunately, it wasn't too inconveniencing, but it did make me want to redo my
+Emacs config at some point in the future.
+
+* Don't Be Too Ambitious
+
+Going back to the point about juggling this with university, I probably could
+have picked a less ambitious idea for the jam. There were loads of unused assets
+and unimplemented ideas. I had plans for implementing particle systems, parallax
+scrolling, a big ol' Metroidvania-styled map with interconnected rooms, enemies,
+saving, gamepad support, &c, &c, &c. A minimal portion of my initial vision made
+it into the end product, to say the least. Toning back the idea blast probably
+would have helped me focus on what was important to implement.
+
+Huge thanks to [[https://www.michaelfiano.com/][Michael Fiano]] for hosting the jam, and to the community for being
+so damn great. Everyone was willing to help one another - Phil was kind enough
+to [[https://itch.io/post/581643][share his makefile with me]][fn:3], and I made plenty of friends along the way.
+
+[fn:1] After returning to rewatch the series after publishing this post, I came to the realization that I was thinking of another point in another video. For those curious, the topic of finishing a simple game before tackling something bigger is covered in [[https://www.youtube.com/watch?v=1jn39JJYW3A&t=0s&list=PLRDhcp_8c7uAPQfE6WMBo7PCNlkQIOLdO&index=6][the fifth entry]].
+
+[fn:2] Which was actually my main inspiration to use Fennel for this jam.
+
+[fn:3] Sadly, due to time constraints, I did not end up using it for the submission. I do, however, have intentions to go back and incorporate it into my post-jam fixes.

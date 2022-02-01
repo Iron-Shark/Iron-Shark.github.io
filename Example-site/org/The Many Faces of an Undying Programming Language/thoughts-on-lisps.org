@@ -1,0 +1,1067 @@
+#+TITLE: The Many Faces of an Undying Programming Language
+#+DATE: <2020-07-20 Mon 09:16>
+#+TAGS: opinion, programming, lisp, common-lisp, scheme
+
+# I ran a [[https://mastodon.sdf.org/web/statuses/104497642847404947][poll]] on Mastodon the other day, and fewer than one fifth of the respondents indicated only knowing one dialect of Lisp. Perhaps I should have followed up and asked how many self-identified as "Lisp hackers", but I don't think it would be unfair to assume that at least some of those working with several Lisps choose to do so because they enjoy the basic properties upon which Lisp dialects are constructed.
+
+This is a post I've been meaning to write for a while now: one anecdotally
+comparing programming languages in the Lisp family. I consider myself to be a
+Lisp hacker. Perhaps that much was obvious from the letter λ adorning my
+website's header, a reference to the λ-calculus which inspired John McCarthy to
+design the first LISP [1]. Yet, "Lisp hacker" likely means little unless you,
+too, consider yourself to be a Lisp hacker. Calling yourself one seems carry
+some level of unstated meaning. Indeed, some identify with more specific groups.
+"Schemer," or "Guiler," or "Racketeer," or "Clojurist." But "Lisp Hackers" ⊇
+"Schemers". There is commonality shared among all, or at least most, of these
+programming languages, and the Lisp hackers recognize and appreciate that
+commonality -- the characteristics that make a programming language a Lisp.
+Homoiconic syntax, powerful metaprogramming facilities, and editor support that,
+in my opinion, is unparalleled. (Yes, I am alluding to GNU Emacs.) This article,
+however, is concerned with the differences. In it, I will be considering the
+specifics of each dialect, and whether or not those specifics make for a
+language I would want to use to develop a new piece of software.
+
+I'm specifically concerned with game development at the time of writing this
+article. An idea for a turn-based tactics game came to me and I felt a Lisp
+would be the best tool for realizing it, but the decision to use "a Lisp" still
+leaves me with several choices. When I enumerate the notable design choices
+behind each dialect, and talk about the approaches I prefer, my opinions will
+be, in some capacity, framed as partial answers to the question of "will I be
+able to comfortably use this to write a video game?" As such, there are a few
+things I am specifically interested in:
+
+- *Ergonomics*, or "a measure of the friction [one experiences] when trying to get
+  things done" [2].
+- *Expressiveness*, or the ease with which code may be understood by a reader.
+- *Performance*, which is nontrivial to properly quantify [3]. I won't be rigorous
+  with this; a one-off run with =time= can give a good idea of the order of
+  magnitude for execution time.
+- *Ease of distribution*, which is difficult to define, but with which I associate
+  platform agnosticism, a runtime that won't bloat my tarballs by several
+  gigabytes, and a lack of baroque and difficult to obtain dependencies.
+- *Ability to interface with other libraries*, as I'll want to be able to
+  draw to the screen, and play sounds, and so on.
+
+For each dialect, I'm allowing myself to use nonstandard functions. I'm aiming
+for an evaluation of the practical aspects of each language, and if you were
+writing software, you'd likely be using more than what's included in the R5RS or
+ANSI CL standards. Though, if these nonstandard functions are specific to a
+single implementation, I will avoid them. SRFI's and QuickLisp are fair game,
+but CHICKEN's Eggs are not. Ah, I'm already getting ahead of myself. Yes, I will
+be comparing Scheme and Common Lisp. I almost have to -- the history of Lisp
+tends to be spun as a schism between Common Lisp and Scheme. I will be speaking
+of a few others as well. I've mostly chosen dialects for which there exists some
+"game engine" type library. For R7RS (CHICKEN), there is [[http://alex-charlton.com/projects/Hypergiant/][Hypergiant]], for R6RS
+(Guile) there is [[https://dthompson.us/projects/chickadee.html][Chickadee]], for Common Lisp there is [[http://www.xelf.me/][Xelf]], and for Fennel there
+is, of course, [[https://love2d.org/][LÖVE]].
+
+#+CAPTION: My take on the drawing in Conrad Barski's /Land of Lisp/. From left to right: Common Lisp, Scheme, +Haskell+ Fennel.
+[[file:lisp-personality-test.png]]
+
+What follows are my opinions, so I'd like to lead with the background that
+motivated them. My earliest "serious" experience with Lisp was with Peter
+Seibel's /Practical Common Lisp/, which I picked up in high school following a
+failed attempt at reading /Structure and Interpretation of Computer
+Programs/.[fn:1] The portion of the latter book that I did manage was enough to
+convince me that learning _a_ Lisp would be valuable, but that learning Common
+Lisp may be more tractable than learning Scheme. The summer following my first
+year of university, I taught myself Scheme to do [[http://summerofcode.withgoogle.com/][GSoC]] for [[https://guix.gnu.org/][GNU Guix]]. Guile
+quickly grew on me, and I soon began [[http://jakob.space/blog/transition-to-haunt.html][using Haunt]] for my personal website. I've
+been unknowingly using Emacs Lisp since much earlier -- not in the sense of
+writing packages -- my old man taught me how to use Emacs when I was nine, but I
+was [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Easy-Customization.html][mostly shielded from having to write =setq= forms]]. I've also used [[https://docs.hylang.org/en/stable/][Hy]], [[https://fennel-lang.org/][Fennel]],
+... well, I'm wildly off track now. Point being, I've used many Lisps, and I've
+subconsciously acknowledged the differences between them, but never turned that
+acknowledgment into coherent thought.
+
+To aid in the comparison, I've written the same raytracer in several dialects of
+Lisp. My reasons for choosing a raytracer are that:
+
+- I'm reasonably familiar with how they work.
+- Performance matters, and differences in performance is noticeable.
+- It's nontrivial, but several implementations of a raytracer is also more
+  tractable than, say, several implementations of a high-performance database.
+
+Another consideration was the number of advancements in raytracing that build
+upon the same basic structure, potentially giving me a way to compare the ease
+with which a change to a system can be made, but writing these raytracers took
+enough out of me that I didn't want to play with them any more.
+
+This was not nearly as telling of a comparison as I had hoped. Once I'd
+completed the first raytracer, everything that followed had the same structure.
+Regardless, writing these raytracers gave me an idea of the characteristics I
+was interested in, especially performance. For anyone who would like to look at
+the code, the implementations are available [[https://git.sr.ht/~jakob/lisp-raytracer-zoo][here]].
+
+*Table of Contents*
+
+- [[*The Issue of Rendering an Image][The Issue of Rendering an Image]]
+- [[*Scheme][Scheme]]
+  - [[*R7RS][R7RS]]
+  - [[*R6RS][R6RS]]
+  - [[*Conclusions on Scheme][Conclusions on Scheme]]
+- [[*Common Lisp][Common Lisp]]
+  - [[*Conclusions on Common Lisp][Conclusions on Common Lisp]]
+- [[*Fennel][Fennel]]
+  - [[*Conclusions on Fennel][Conclusions on Fennel]]
+- [[*Lisps I've Neglected][Lisps I've Neglected]]
+  - [[*Emacs Lisp][Emacs Lisp]]
+  - [[*Gerbil Scheme][Gerbil Scheme]]
+  - [[*Racket][Racket]]
+  - [[Janet][Janet]]
+  - [[*Clojure][Clojure]]
+
+* The Issue of Rendering an Image
+
+Well, if we're writing a raytracer, then, we had better have some way of seeing
+the results. The issue is portability. Ideally, I'd like to be able to run the
+raytacers on different implementations of each language, but none of them have
+standardized support for drawing graphics. An idea I had was to render the image
+to the terminal using ANSI escape sequences, but I thought the resulting images
+would be quite shitty. Instead, I decided to go the [[https://github.com/ssloy/tinyrenderer/wiki/Lesson-0-getting-started][route that tinyrenderer
+takes]], which is to output to an image file. Initially, the image format I went
+with was the venerable PNG. This was a mistake. Even if it did lead to a rather
+elegant CRC procedure in Scheme.
+
+#+BEGIN_SRC scheme
+(define (chunk-crc bytes)
+  (define (process-byte crc byte)
+    (bitwise-xor (vector-ref png-crc (bitwise-and #xff (bitwise-xor crc byte)))
+                 (arithmetic-shift crc -8)))
+  (reduce process-byte bytes #xffffffff))
+#+END_SRC
+
+Realizing PNG was needlessly complex, I went on to write a [[https://git.sr.ht/~jakob/lisp-raytracer-zoo/tree/master/write-bmp.scm][BMP encoder]], which
+was fine until I came across [[https://nullprogram.com/blog/2017/11/03/][an article]] from Chris Wellons about rendering video
+with C by encoding frames as [[http://netpbm.sourceforge.net/doc/][Netpbm]] images. I decided to scrap my BMP encoder
+and go with PPM instead. Netpbm is text-based: the issue with a PNG or BMP
+encoder in Scheme, for example, is that you're dealing with a binary format.
+Glancing over the standards now, it seems there are, indeed, standardized
+procedures for dealing with binary data in both R6RS and R7RS. Regardless,
+dealing with those binary structures and having to consider endianness is a
+pain. PPM is _dead_ simple. In fact, I'd wager that if all you had access to were
+the examples on the [[https://en.wikipedia.org/wiki/Netpbm][Wikipedia]] page, you'd be able to write an encoder. Here's
+the Scheme implementation:
+
+#+BEGIN_SRC scheme
+(define (write-ppm width height pixels)
+  "Encode the WIDTH by HEIGHT image given as PIXELS into the portable pixmap
+format (PPM), writing the result to `(current-output-port)'."
+  (define (delimit-values values)
+    (cond ((null? values)
+           (newline))
+          ((= 1 (length values))
+           (display (car values))
+           (delimit-values (cdr values)))
+          (else
+           (display (car values))
+           (display " ")
+           (delimit-values (cdr values)))))
+
+  ;; Magic
+  (delimit-values '("P3"))
+
+  ;; Dimensions
+  (delimit-values (list width height))
+
+  ;; Depth
+  (delimit-values '("255"))
+
+  ;; Image contents
+  (for-each delimit-values (vector->list pixels)))
+#+END_SRC
+
+If you do away with my nice formatting, that's twelve lines of code, all of
+which are R5RS-compatible. We have access to the Netpbm suite, too, so if we
+want a PNG, we can always =./write-ppm | pnmtopng > test.png=. Netpbm is a
+real hidden gem. Well, hidden to me, at least.
+
+* Scheme
+
+If you aren't familiar with Scheme, it has somewhat of a self-imposed[fn:2]
+reputation for appealing to academic types. It's also one of the most
+opinionated languages I know of; all the specs of interest lead with an
+assertion that "programming languages should be designed not by piling feature
+on top of feature, but by removing the weaknesses and restrictions that make
+additional features appear necessary." The way that Scheme embraces purity and
+simplicity makes it clear it was designed by math nerds. (Hey, I'm a math nerd,
+too. Take it easy.)
+
+As I've just mentioned, there are specs. A few, to be sure. The evolution of
+Scheme standards begins in a linear fashion: RRS → RRRS → R3RS → R4RS → R5RS. I
+like to think of this as "classic Scheme". But when it came time to revise R5RS,
+the ratification of the subsequent R6RS caused some controversy. It was
+"bloated", or whatever. Something like that. So when it came time to design R7RS
+(small), the Scheme Language Steering Committee decided to let the language
+fork, beginning with the earlier R5RS as a blank slate [4]. That way, the nerds
+that hated everything about R6RS could have their way, and the nerds that liked
+R6RS could have their way. Scheme was divided, but at peace. Oh, and nowadays
+there's a work-in-progress [[https://bitbucket.org/cowan/r7rs-wg1-infra/src/default/R7RSHomePage.md][R7RS-large]]. ಠ_ಠ
+
+I'm not going to talk about R7RS-large here. It's just too new.
+
+The standards are all extremely short. R5RS is 50 pages. R7RS is larger (n ≈ 88)
+[11], and R6RS is quite a bit larger (n ≈ 163) [11], but they still clock in at
+fewer pages than any other language spec I know of. You can't pack a whole lot
+into 50 pages, so there is a de-facto standard library: [[https://srfi.schemers.org/][Scheme Requests for
+Implementation]], or SRFI.
+
+** R7RS
+
+Because I'm slightly biased towards R6RS, I began this journey with R7RS,
+thinking that returning to the problem with R6RS instead would give me a sense
+of how much it really brings to the table. There are [[https://small.r7rs.org/wiki/ImplementationSupport/][a few implementations]] of
+R7RS out in the wild. The one I tried was [[http://call-cc.org/][CHICKEN]], which is not officially an
+R7RS Scheme, but supports the R7RS standard as an Egg (library). It took some
+effort, but I did get =company-mode= & friends working in Emacs for CHICKEN. The
+[[https://wiki.call-cc.org/faq#how-can-i-install-chicken-eggs-to-a-non-default-location][documentation]] for installing Eggs to a non-default location is out-of-date, but
+if you copy the system libraries to your =CHICKEN_INSTALL_REPOSITORY=, you'll be
+fine. A minor complaint regarding Geiser (or more accurately, =scheme-mode=): it
+doesn't seem to be able to properly highlight or indent user-defined macros.
+Perhaps that's something I could fix someday.
+
+A disadvantage to picking a hobbyist Scheme implementation is that they aren't
+battle-hardened. In writing this post, I managed to discover [[http://bugs.call-cc.org/ticket/1703][a regression]] in the
+latest version of CHICKEN, where my procedure was being called with parameters
+in the wrong order. So, at least for this article, I am using 4.13.0. Gentoo
+also doesn't have Chicken 5 yet, but in terms of stability, perhaps that's a
+good thing.
+
+So, what does R7RS add to "classic Scheme" that I care about?
+
+- Standardized records.
+- Standardized bytevectors.
+- A way of defining libraries.
+- =parameterize=, which is something I dealt with in Guix that I'd nearly
+  forgotten about. If you aren't familiar with it, the best way I can describe
+  it is a way of emulating dynamic scope.
+- =when= and =unless=, which are trivial to implement yourself, but it's always nice
+  not having to write them.
+- =case-lambda=.
+- =vector-map=, =vector-for-each=.
+
+There's more to R7RS, of course, but these are the things that stand out to me.
+The spec has a section starting on page 77 titled "Language Changes" which
+outlines the incompatibilities with R5RS and R6RS, as well as the additions to
+R5RS.
+
+On the topic of the R7RS spec, I think it's worth reading for anyone who
+produces technical writing in some capacity, even if you don't care much for
+Scheme -- much like how K&R[fn:3] is worth reading even if you don't care about
+C -- they're both great examples of writing that's concise, but doesn't
+sacrifice comprehensibility. The design choices are also quite well thought-out,
+and I think that's worth appreciating. For example, they support only the file
+system operations which are universally portable [5]. This means no support for
+creating or manipulating directories. Such a restriction may sound primitive,
+but the common alternative in providing a portable filesystem abstraction is
+[[https://fasterthanli.me/articles/i-want-off-mr-golangs-wild-ride][rather unpleasant]]. If you need to be manipulating directories in such a way,
+seek a POSIX interface rather than a filesystem interface.
+
+The hygenic macro system has been in Scheme since R5RS, but this was the first
+time I'd actually used it. I've written plenty of macros in Common Lisp and
+Emacs Lisp with =defmacro=, but this was a breath of fresh air.
+
+#+BEGIN_SRC scheme
+(define-syntax vec3-bind
+  (syntax-rules ()
+    ((vec3-bind ((names vec) ...)
+       body)
+     (let-values ((names (values (vec3-x vec)
+                                 (vec3-y vec)
+                                 (vec3-z vec)))
+                  ...)
+       body))))
+#+END_SRC
+
+This worked on the first try. Once you read a [[http://www.willdonnelly.net/blog/scheme-syntax-rules/][tutorial]] on it, it's more
+intuitive than building an AST "by-hand". Here's a slightly less trivial
+example:
+
+#+BEGIN_SRC scheme
+(define-syntax maybe-bind
+  (syntax-rules ()
+    ((maybe-bind ((name option) ...)
+       body)
+     (if (every is-some? (list option ...))
+         (let ((name (unwrap option))
+               ...)
+           body)))))
+#+END_SRC
+
+I know, I know. This isn't the proper way to deal with an option type. I should
+have brushed up on the =mlet*= implementation in Guix. But this sufficed for what
+I needed to do.
+
+Come to think of it, my choice to create an option type for a dynamically-typed
+language is a bit strange, no? Rust has apparently left me yearning for the
+ability to =map= over things which are logically equivalent to options, and [[https://srfi.schemers.org/srfi-2/srfi-2.html][SRFI-2]]
+and the likes didn't cross my mind at the time I wrote this.
+
+All in all? Writing a raytracer in vanilla R7RS was reasonably easy. My biggest
+gripe was debugging. CHICKEN has essentially no stack traces. It has a "call
+history", but that gives very little context for where something's being called
+/from/. No line numbers, either.
+
+** R6RS
+
+R7RS actually draws quite a bit from R6RS, and both are, for the most part,
+backwards-compatible with R5RS. So I /should/ be able to run the R7RS version of
+my raytracer with an R6RS implementation like Chez, right? For the most part,
+yeah. I needed to deal with exactly two things: =error= now takes a "who"
+parameter, and the R7RS =define-record-type= is almost nothing like the equivalent
+in R6RS.
+
+This isn't represented in the more recent commits, but there were also a few
+nonstandard things in CHICKEN I was depending on that needed to be changed. In
+Chez, and other Schemes, nested =defines= need to be the absolute first thing in
+the form. This was incompatible with the little documentation strings I'd put at
+the beginning of my procedures, which, in the implementations that I'm using,
+[[https://mdhughes.tech/2018/11/18/inline-documentation-or-lack-thereof-in-scheme/][don't do anything anyway]]. I was also using SRFI-1's =every=, but I replaced that
+with a call to a standard R6RS procedure of a different name.
+
+On the topic of R6RS records, they end up being quite a bit less verbose than
+R7RS. This is how a record definition appears in R7RS:
+
+#+BEGIN_SRC scheme
+(define-record-type <vec3>
+  (make-vec3 x y z)
+  vec3?
+  (x vec3-x)
+  (y vec3-y)
+  (z vec3-z))
+#+END_SRC
+
+And this is how the equivalent record definition appears in R6RS:
+
+#+BEGIN_SRC scheme
+(define-record-type vec3 (fields x y z))
+#+END_SRC
+
+You wouldn't guess it from the above example, but the =define-record-type= in R6RS
+is very flexible. The above is shorthand for
+
+#+BEGIN_SRC scheme
+(define-record-type (vec3 make-vec3 vec3?)
+  (fields
+   (immutable x vec3-x)
+   (immutable y vec3-y)
+   (immutable z vec3-z)))
+#+END_SRC
+
+Göran Weinholt wrote [[https://weinholt.se/articles/r7rs-vs-r6rs/][an article]] comparing R7RS and R6RS. In it, he mentions that
+the reason for R7RS's =define-record-type= verbosity is that the macro system is
+incapable of creating new identifiers. Another point for =syntax-case= in my book.
+His article also mentions offhandedly that the R6RS record system has been
+criticized, but I can't find any in the [[http://www.r6rs.org/formal-comments/][formal comments]] or elsewhere. I think it
+kicks ass.
+
+Much like R7RS, there is a section in the R6RS spec dedicated to "language
+changes." This is Appendix E, for those of you following along at home, which is
+surprisingly similar to the equivalent section in R7RS. They seemed to aim to
+scratch the same itch -- allowing large, non-trivial programs to be written in
+Scheme -- in slightly different ways.
+
+Unlike R7RS, R6RS has a standard =reduce= procedure.[fn:5] Well, by a different
+name. It has =fold-left= and =fold-right=, the more general versions of =reduce=. Like
+=when= and =unless=, =reduce= is trivial to implement yourself, but it's nice to have
+it at the fingertips.
+
+#+BEGIN_SRC scheme
+(define (reduce proc list init)
+  (define (reduce-iter list result)
+    (if (null? list)
+        result
+        (reduce-iter (cdr list) (proc result (car list)))))
+  (reduce-iter list init))
+#+END_SRC
+
+Ah, yes. This is some very [[https://erkin.party/blog/200715/evolution/][typical]] Scheme code. I haven't mentioned it yet, but
+Scheme implementations are required to be [[https://en.wikipedia.org/wiki/Tail_call][tail-recursive]] [6]. The above
+procedure should compile to a good ol' =jnz= loop on AMD64. I.e. =reduce-iter= does
+not actually perform a function call to itself.
+
+=(rnrs lists (6))= has most of the SRFI-1 procedures I care about. There's =for-all=
+instead of =every=, which I initially thought was too close to =for-each= for my
+tastes, until I realized the symmetry with =exists= (the two functions represent ∀
+and ∃ in [[https://en.wikipedia.org/wiki/Propositional_calculus][propositional logic]]). R6RS has all the cool stuff from R7RS, like =when=,
+=unless=, =case-lambda=, and [[http://www.r6rs.org/final/html/r6rs-lib/r6rs-lib-Z-H-9.html#node_sec_8.2.10][string ports]].
+
+The differences between the R7RS and R6RS library systems are, to my
+understanding, small. R6RS requires =export= and =import= forms at the beginning of
+the library, in that order, but the import and export specs are essentially the
+same (=except=, =rename=, ...).
+
+Performance-wise, Chez is quite a bit better than CHICKEN.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ time bash -c './r6rs-raytracer > test.ppm'
+
+real    0m13.665s
+user    0m11.645s
+sys     0m1.875s
+
+jakob@Epsilon ~ $ time bash -c './r7rs-raytracer > test2.ppm'
+
+real    1m12.259s
+user    1m11.515s
+sys     0m0.598s
+#+END_SRC
+
+where 'r6rs-raytracer' was produced by [[https://github.com/gwatt/chez-exe][chez-exe]] at opt-level 3. The main thing
+CHICKEN has going for it is that the Chez executable is "big-boned".
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ strip r6rs-raytracer
+jakob@Epsilon ~ $ du -sh r6rs-raytracer
+1.7M	r6rs-raytracer
+
+jakob@Epsilon ~ $ strip r7rs-raytracer
+jakob@Epsilon ~ $ du -sh r7rs-raytracer
+236K	r7rs-raytracer
+#+END_SRC
+
+Nearly all of that is coming from including 'petite.boot' verbatim. If I cared
+enough to shave that down, I could probably write a tool to do whole-program
+dead-code analysis with my code and the boot file sources, but 1.7 megabytes
+doesn't make me vomit. It wouldn't fit on a floppy disk, but I've seen Go
+binaries that are on the order of gigabytes in size, so it could be worse.
+
+CHICKEN isn't the fastest R7RS implementation out there, and I was using an
+older version of it anyway, so take this hand-wavy benchmark with a grain of
+salt. If you consider the Larceny benchmark suite to be a fair comparison, then
+[[https://ecraven.github.io/r7rs-benchmarks/][this page]] would suggest that the Gerbil [[https://cons.io/guide/r7rs.html][implementation of R7RS]] is, in general,
+faster than the Chez implementation R6RS. The main take-away of that page to me
+is that there are fast implementations of both standards.
+
+The stack trace situation on Chez is even worse than it is with CHICKEN,
+unfortunately. Guile is better, but the last time I used it for Guix, variables
+being optimized out gave me a massive headache. I yearned for a simple
+AST-walking interpreter version. As of a month ago, Andy Wingo has conjured up
+something [[https://wingolog.org/archives/2020/06/03/a-baseline-compiler-for-guile][close enough]], but I haven't had the opportunity to try it out yet.
+
+** Conclusions on Scheme
+
+Scheme is enjoyable to use. R7RS and R6RS are both quite bare-bones, so I feel I
+would need to spend time familiarizing myself with either a subset of the
+published SRFI's, or another "utility library" such as Gule's ice-9 to be
+productive. R6RS seems to be the nicer of the two from a programmer's
+perspective, but they're similar enough that I can see myself being reasonably
+happy in either. If I'm going to use a Scheme, the real question is going to be
+"which implementation will I use?", which will in turn answer the question of
+which standard my code will conform to.
+
+* Common Lisp
+
+To my understanding, there isn't an oversimplified stereotype for Common Lisp
+hackers in the same way that there is for Schemers. But I think most would agree
+Common Lisp is an approach to Lisp that favors pragmatism as opposed to purity
+-- which isn't to imply that practical software cannot be written in Scheme.
+Like Scheme, Common Lisp is standardized. It's 1,100 pages long [7]. For
+reference, the C++17 draft is 1,605 pages long [8]. It isn't a pretty language.
+The design was an attempt to unify several older dialects of Lisp.
+
+#+CAPTION: This self-inflicted joke has become obligatory when speaking about Common Lisp in the context of code aesthetics.
+[[file:Lisp Kludge.png]]
+
+Common Lisp tends to be a good choice for when performance matters. With proper
+declarations, its performance is comparable to C [12]. It isn't a common choice
+in industry, but there are a few notable success stories. ITA (now Google
+Flights) is the one I know about most, as I had a student who was a program
+manager for that when I taught as a drum line instructor. There's also Grammarly
+and the [[http://flownet.com/gat/jpl-lisp.html][DS1 Remote Agent system]] from NASA's Jet Propulsion Lab. That much would
+seem to suggest it'd be an okay choice for my purposes. But this isn't new to
+me; I've known that CL is a good choice in that respect for a while now. I'm a
+bit more interested in how it fares in terms of language ergonomics and
+expressiveness. For starters, =write-ppm= can be quite a bit more compact in
+Common Lisp.
+
+#+BEGIN_SRC common-lisp
+(defun write-ppm (width height pixels)
+  (format t "P3~%~{~a ~}~%255~%~{~{~a ~}~%~}~%"
+          (list width height)
+          (coerce pixels 'list)))
+#+END_SRC
+
+I'm being facetious. This works fine, but it's also more or less showing off for
+the purpose of showing off.
+
+I am a little disappointed that the =(coerce pixels 'list)= is necessary. Vectors
+are proper sequences in Common Lisp, but =~{~}= only works on lists. Ah, well.
+It's disgusting. Don't do it. Here's a more readable implementation:
+
+#+BEGIN_SRC common-lisp
+(defun write-ppm (width height pixels)
+  "Encode the WIDTH by HEIGHT image given as PIXELS into the portable pixmap
+format (PPM), writing the result to `*standard-output*'."
+  (write-line "P3")
+  (format t "~a ~a~%" width height)
+  (write-line "255")
+  (loop for (r g b) across pixels
+        do (format t "~a ~a ~a~%" r g b)))
+#+END_SRC
+
+which is still more concise and, arguably, a bit clearer than my Scheme version.
+I'm using two behemoths here, =format= and =loop=, which Peter Siebel describes as
+the two most controversial features in the language [9].
+
+Oh, notice that string I've put at the beginning of the procedure? Here's
+something no Scheme implementation I know of besides Guile can do:
+
+#+BEGIN_SRC common-lisp
+CL-USER> (documentation #'write-ppm 'function)
+"Encode the WIDTH by HEIGHT image given as PIXELS into the portable pixmap
+format (PPM), writing the result to `(current-output-port)'."
+#+END_SRC
+
+So CL has a few niceties off the bat. Many of the "core" forms are shared
+between Scheme and Common Lisp, so code tends to be reasonably similar.[fn:4]
+Aside from Scheme tending towards the idioms of other functional programming
+languages and Common Lisp code often being more or less imperative, there are a
+few noticeable differences:
+
+- Common Lisp supports dynamic scoping, and this is the default for variables
+  defined at the top-level with =defvar= and =defparameter=. This is usually an
+  advantage in the code I've read. I think Parenscript's [[https://gitlab.common-lisp.net/parenscript/parenscript/-/blob/master/src/compiler.lisp][compiler.lisp]] is a good
+  example of this. Dynamic scope does necessitate the =*earmuffs*= naming
+  convention, however, much like how preprocessor macros in C are =ALL_CAPS= -- in
+  the interest of keeping your feet free of bullet holes, you want to know when
+  you're messing with a "special" variable.
+- Common Lisp is a [[http://www.nhplace.com/kent/Papers/Technical-Issues.html][Lisp-2 rather than a Lisp-1]]. What this means is that there
+  are separate namespaces for functions and variables. So if you want to treat a
+  function named =FOO= as a value, you need to write it as =#'FOO=, and if you want
+  to call a variable named =FOO= which refers to a function, you will need to
+  =(FUNCALL FOO)=. In Scheme, =FOO= is either a function or some other value, not
+  both. So you can refer to =FOO= as a value when it names a function, and you can
+  invoke it merely as =(FOO)=.
+- No proper booleans. Like in C, anything that is not =nil= (=NULL=), the empty
+  list, is considered to be a truthy value.
+
+I really enjoyed having =with-accessors= (well, I used =with-slots= for no good
+reason). If there were something like that in the Scheme standard, I probably
+would have used that instead of my =vec3-bind= macro. Though, I think the /best/ way
+of dealing with destructuring things like vectors is pattern matching.
+
+CLOS is very cool. In my Scheme implementation of the raytracer, I had a few
+procedures like this:
+
+#+BEGIN_SRC scheme
+;; If RAY intersects SHAPE with T-MIN ≤ t ≤ T-MAX, return (some . t). Otherwise,
+;; return 'none.
+(define (intersect ray shape t-min t-max)
+  (let ((proc (cond ((plane?  shape) intersect-plane)
+                    ((sphere? shape) intersect-sphere))))
+    (proc ray shape t-min t-max)))
+#+END_SRC
+
+"Explicit dispatch," in SICP terms [13]. I like the data-directed style that
+CLOS offers, and I would have used it in my Scheme implementation if there were
+standard facilities to support it. Oh, and there was a built-in =PI= constant! In
+the Scheme implementation I had to copy an approximation from somewhere.
+
+#+BEGIN_SRC scheme
+;; Convert D, a value in degrees, to radians.
+(define (degrees->radians d)
+  (let ((pi 3.1415926535897932384626433))
+    (* d (/ pi 180))))
+#+END_SRC
+
+I realize that dealing with π isn't common, but if =cos= and =tan= are going to be
+included in the standard, why can't =pi=?
+
+Oh, and having *proper stack traces* was a breath of fresh air.
+
+Sadly, that's where the niceties end. =t= is a typical name for the variable in a
+[[https://web.mit.edu/alexmv/6.037/sicp.pdf][parametric equation]], but it's also the name of the canonical "true" value in CL,
+so you can't use it as the name of a parameter.
+
+#+BEGIN_SRC prog
+error:
+  COMMON-LISP:T names a defined constant, and cannot be used in
+  an ordinary lambda list.
+#+END_SRC
+
+There was a name clash with =some=, so I had to change the names of my option type
+constructors to =make-some= and =make-none=. Also, the shading equation I'm using
+gives materials a $p$ parameter, which ends up being a very unfortunate
+parameter name for a CL struct.
+
+#+BEGIN_SRC prog
+style-warning:
+  The structure accessor name MATERIAL-P is the same as the name of the structure
+  type predicate. ANSI doesn't specify what to do in this case. We'll overwrite
+  the type predicate with the slot accessor, but you can't rely on this behavior,
+  so it'd be wise to remove the ambiguity in your code.
+#+END_SRC
+
+Names in Scheme are much nicer than Common Lisp -- here, =MATERIAL-P= is the name
+of the predicate function (which tells you if a value is a material). In Scheme,
+it would be =material?=. Another difference in naming convention is that Common
+Lisp hackers, for some reason, avoid using =->= to denote conversions (i.e.
+=degrees->radians=) like you see in Scheme code. It's an aesthetic preference, but
+I like Scheme's way of doing it better.
+
+The library situation with CL is... a bit complex for me. [[https://common-lisp.net/project/asdf/][ASDF]] is a great piece
+of software, but I really wish it weren't necessary. A simple library system for
+me, thank you.
+
+That said, there are many more CL libraries in [[https://www.quicklisp.org/beta/][Quicklisp]] (n > 1,500) than there
+are Scheme libraries in a comparable registry like [[https://akkuscm.org/][Akku.scm]] (n = 288).
+
+Performance-wise, SBCL ain't shit.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ time bash -c 'sbcl --script cl-raytracer.fasl' > test.ppm
+
+real    0m23.390s
+user    0m21.231s
+sys     0m2.155s
+#+END_SRC
+
+The fasl was compiled with =(declaim (optimize (speed 3) (space 0) (debug 0)))=,
+but I didn't give any type information. To me, this is fast, even if the Chez
+executable was faster by a good 10 seconds.
+
+** Conclusions on Common Lisp
+
+When I write CL, I'm typically using not one, but two utility libraries
+([[https://common-lisp.net/project/alexandria/][Alexandria]] and [[https://github.com/ruricolist/serapeum][Serapeum]]).[fn:6] The spec may be huge, but a lot of what it
+guarantees is mostly useless to me, and the baggage that comes with that
+complexity makes for a slightly less pleasant experience. However, it's a
+battle-tested language with plenty of [[https://elmord.org/blog/?entry=20191114-sbcl-chez][mature implementations]]. If I can get past
+its blemishes, I'm certain it would be a good choice for what I'm working on.
+
+* Fennel
+
+[[https://fennel-lang.org/][Fennel]], when juxtaposed with Scheme and Common Lisp, seems like some sort of
+futuristic space technology. It's the newest of the three, and it has a very
+different mouthfeel. Fennel also happens to be the name of one of my favorite
+vegetables. It's surprisingly nice to munch on raw. A bit like licorice.
+
+I learned of Fennel from [[http://technomancy.us/][Phil Hagelberg]], who used it to develop a [[http://technomancy.us/187][real-time
+strategy game for the 2018 Lisp Game Jam]]. Inspired by his retelling of the
+experience, [[http://jakob.space/blog/slime-the-world-postmortem.html][I used it myself for the autumn edition of that game jam]].
+
+The reason for Fennel's uniqueness is that it compiles to and interfaces with
+[[https://en.wikipedia.org/wiki/Lua_(programming_language)][Lua]], thus inheriting Lua's semantics. Rather than lists being the principal data
+structure, it's tables. Programming in a more functional style is possible, but
+you'll eventually need to write some imperative code.
+
+#+BEGIN_SRC fennel
+(fn pack [...]
+  (var result [])
+  (let [n (select "#" ...)]
+    (for [i 1 n]
+      (tset result i (select i ...))))
+  result)
+
+(fn map [f sequence]
+  (var result [])
+  (when sequence
+    (for [i 1 (# sequence)]
+      (tset result i (f (. sequence i)))))
+  result)
+
+(fn fold [f init sequence]
+  (var result init)
+  (when sequence
+    (for [i 1 (# sequence)]
+      (set result (f result (. sequence i)))))
+  result)
+#+END_SRC
+
+Having tables available to me was actually very nice for this specific program.
+If you recall, my Scheme implementation of the raytracer used explicit dispatch.
+I certainly could have done something similar in Scheme, but it felt very
+natural in Fennel to associate the procedures with the instance. For the smaller
+procedures, such as =normal-plane=, I could even make use of lexical closure, and
+have those procedures capture the arguments passed to the constructor.
+
+#+BEGIN_SRC fennel
+(fn intersect-plane [r shape t-min t-max]
+  (let [{ :n normal :p0 p0 } shape
+        { :origin origin :direction direction } r
+        normal (vec3-normalize normal)
+        denominator (vec3-dot direction normal)]
+    (if (~= 0 denominator)
+        (let [t (/ (vec3-dot (vec3- p0 origin) normal)
+                   denominator)]
+          (if (<= t-min t t-max) t)))))
+
+(fn plane [p0 n material]
+  {
+   :n n
+   :p0 p0
+   :material material
+
+   :intersect intersect-plane
+   :normal (fn [] (vec3-normalize n))
+  })
+#+END_SRC
+
+You get Lua's error system, too, which is a little bit like Go's. Fortunately, I
+did not need to use it here, because I dropped the option type I was using in
+Scheme. My after-the-fact realization that they don't make much sense in
+dynamically-typed languages was correct.
+
+You've probably noticed by now, but Fennel doesn't have the old-school LISP
+syntax that Common Lisp and Scheme have. You can't have too many parentheses in
+your =let= forms.
+
+#+BEGIN_SRC fennel
+>> (let ((x 1)) x)
+Compile error: Compile error in unknown:1
+  expected even number of name/value bindings
+
+(let ((x 1)) x)
+     ^^^^^^^
+,* Try finding where the identifier or value is missing.
+#+END_SRC
+
+In some cases, your =let= forms won't have any parentheses at all. It's also like
+=let*=, in that the initialization form can refer to other variables bound by that
+same =let=. Similarly, =if= is basically a =cond=, except that the arms don't need to
+be enclosed in parentheses. It all feels rather [[https://srfi.schemers.org/srfi-119/][wispy]] to me, which isn't a bad
+thing. Personally, I think Fennel's way of doing it is more aesthetically
+pleasing. The benefit of all the parentheses in the old-school LISP =let= is that
+you can introduce lexical variables which aren't initialized, so the code in the
+=let= body can do something before initializing it.
+
+#+BEGIN_SRC common-lisp
+(let (a)
+  ... magic! ...
+  (setf a some-value)
+  ... magic! ...
+  a)
+#+END_SRC
+
+But you can't manipulate variables introduced by a =let= in Fennel, so carrying
+that detail over doesn't make sense.
+
+Additionally, =fn= and =lambda= are not what you would expect. Whereas in Scheme,
+where =define= produces a named function and =lambda= produces an unnamed function,
+both =fn= and =lambda= can be used to produce either named or unnamed functions. The
+difference is that =lambda= checks the number of arguments it's been given, while
+=fn= does not. This unchecked nature of =fn= makes it quite nice for generic
+procedures where you may have unused parameters.
+
+Syntactic destructuring was my favorite part of using Fennel, especially as
+there's support for partial table destructuring: you can omit the fields you
+aren't interested in.
+
+Fennel has support for macros, which gives it quite a leg up over vanilla Lua.
+The macro system is modeled on =defmacro=, and thus unhygenic, but at least
+there's a reader macro built-in to do the =gensym= dance for you. There's also
+=eval-compiler=, which allows you to run arbitrary code at compile-time with
+access to the compiler scope, but I haven't thought of a use-case where that
+would be necessary. It's worth mentioning that the macro system is much better
+than it once was. Fennel didn't have quasiquotation when I used it last; I
+basically didn't bother with macros for Slime the World. The built-in macro
+library is small. There are [[https://clojure.org/guides/threading_macros][arrow macros]] and the =when= and =unless= forms I've been
+raving about since the beginning of this article.
+
+I had a few unfortunate name clashes.
+
+#+BEGIN_SRC fennel
+Compile error: Compile error in unknown:164
+  use of global z1 is aliased by a local
+
+,* Try renaming local z1.
+,* Try refer to the global using _G.z1 instead of directly.
+#+END_SRC
+
+
+But the solution this lead me to...
+
+#+BEGIN_SRC fennel
+(fn vec3+ [...]
+  "Return the sum of VECS, as in vector space addition."
+  (fold (fn [a b]
+          (let [{:x α :y β :z γ} a
+                {:x x :y y :z z} b]
+            (vec3 (+ α x) (+ β y) (+ γ z))))
+        (vec3 0.00 0.00 0.00)
+        (pack ...)))
+#+END_SRC
+
+... which is surprisingly clear: the Greek letters correspond to one vector, and
+the Latin letters correspond to another. I don't know if I'll use this
+elsewhere. It's difficult enough to type.
+
+The issues I was having with =fennel-mode= that I mentioned in my post about Slime
+the World seem to still be there, but I was able to fixed them with =M-x
+set-variable RET lisp-indent-function RET fennel-indent-function=, which makes me
+think that I may have something naughty in my =lisp-mode-hook=. The editor support
+beyond that is modest. There's a "go to definition" implementation, and you can
+spawn a Fennel REPL in comint. Quite comfy, though I feel as though a potential
+project for me would be a =company= backend for Fennel.
+
+Performance-wise, Fennel isn't bad. Not race car speed, but not like my
+grandmother's car either.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ time bash -c 'fennel fennel-raytracer.fnl > test.ppm'
+
+real    3m11.183s
+user    3m10.805s
+sys     0m0.236s
+#+END_SRC
+
+If you drop =luajit= in place of =lua=, you're starting to looking at the speeds my
+car's usually going.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ time bash -c 'fennel fennel-raytracer.fnl > test.ppm'
+
+real    1m0.591s
+user    1m0.335s
+sys     0m0.145s
+#+END_SRC
+
+** Conclusions on Fennel
+
+I'm not sure Fennel will be my "go to" Lisp, at least not right now. But it
+seems to be a perfectly fine choice for game development. Having access to LÖVE
+and the Lua game development libraries surrounding it is reason enough for me to
+consider it.
+
+* Lisps I've Neglected
+
+There are a few other Lisps I won't speak about in depth in this article, but
+that I'd like to mention for completeness.
+
+** Emacs Lisp
+
+Emacs Lisp, or Elisp, is generally [[https://www.emacswiki.org/emacs/WhyDoesElispSuck][hated]]. I don't think it's that bad. It comes
+with a subset of the standard functions in Common Lisp that are actually useful.
+It's also a Lisp-2 with dynamic scope (by default -- many packages opt-in to a
+lexically scoped variant of Emacs Lisp), so writing Elisp feels a lot like
+writing Common Lisp, just with buffers as the principal way of manipulating
+textual data, and with a very archaic UX API. There's no namespacing, either, so
+trying not to step on other people's functions is similar to the situation in C.
+
+** Gerbil Scheme
+
+I first heard about [[https://cons.io/][Gerbil]] from François-René Rideau at a Boston Lisp Meetup.
+He's [[https://fare.livejournal.com/188429.html][written about it a little bit]] if you want to know why it appeals to a
+rather prominent figure in the CL community, but, in brief, it tries to make
+Scheme a bit more modern, and it does this by taking a few pages out of CL's
+book.
+
+I was really excited about Gerbil. It has pattern matching, =syntax-case=, and
+generic =set!=. There's a kick-ass standard library, too. It has a HTTP
+client/server, and support for event-driven and actor-oriented programming, all
+built-in. The object system looks like like Common Lisp, with form names like
+=defstruct=, =defgeneric= and =defmethod=, and feels like it, too, provided you import
+=:std/generic=. There's a separate system for single dispatch, but then invocation
+becomes ={method-name}= rather than =(procedure-name)= and... I'm not a fan.
+
+I gave up on the ray tracer in Gerbil, partly because I felt there was a bit
+much to take in to be able to write about it the next day. It's something I'm
+going to look into more, because I have a hunch that it _might_ be the perfect
+choice for this project.
+
+My biggest complaint at the moment is the lack of maturity. The build system for
+the compiler is ridiculous. Set =GERBIL_BUILD_CORES=1= if you don't want OOM kills
+like this:
+
+#+BEGIN_SRC prog
+... compile misc/list
+{standard input}: Assembler messages:
+{standard input}:510: Warning: end of file not at end of a line; newline inserted
+{standard input}:511: Error: expecting operand after ','; got nothing
+{standard input}: Error: open CFI at the end of file; missing .cfi_endproc directive
+x86_64-pc-linux-gnu-gcc: fatal error: Killed signal terminated program cc1
+compilation terminated.
+#+END_SRC
+
+... with no way to continue the build from where it left off. The documentation
+is filled with "Please document me!". If I'm going to invest in Gerbil, I had
+better become a part of the development efforts as well.
+
+There's [[https://cons.io/guide/emacs.html][rudimentary Emacs support]]. I was using [[https://github.com/thunknyc/emacs-treadmill][treadmill]] when I played with it,
+which I enjoyed because it had completion support. I'd need to spend some time
+hacking on my config if I were to use it seriously.
+
+** Racket
+
+[[https://racket-lang.org/][Racket]] (formerly PLT Scheme), like Gerbil, is likely to be exactly what I'm
+looking for: a "modern" take on Scheme. It's oriented towards designing
+programming languages, and I think that's another similarity that can be drawn
+between it and Gerbil, the latter of which boasting a "state of the art macro
+... system" [10].
+
+Scheme may have schismed, but I think that Racket may be a unifying force for
+Schemers. I was once a skeptic, under the impression that it's value was purely
+as a teaching language. When Chris told me that he was writing [[https://gitlab.com/spritely][Spritely]] in
+Racket, I recall (not saying aloud, but) thinking to myself, "why choose Racket
+over Guile?" But the reality is that Racket is incredibly well-designed and has
+more of a community surrounding it than any other Scheme. Now that I've given it
+a proper glance, I have no doubt that it was an excellent choice there.
+
+The Racket team is currently [[https://blog.racket-lang.org/2020/02/racket-on-chez-status.html][adopting a new backend]], which I think is promising.
+In either case, performance with the current backend is not bad in the
+slightest.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ time bash -c 'racket r6rs-raytracer.scm > test.ppm'
+
+real	1m7.742s
+user	1m6.122s
+sys	0m1.794s
+#+END_SRC
+
+This is on the order of CHICKEN's speed. And, bear in mind, this is an old
+version of Racket, too -- the most stable version in the Gentoo repositories is
+7.0, which is from 2018.
+
+** Hy
+
+[[https://docs.hylang.org/en/stable/][Hy]] is a bit like [[http://fennel-lang.org/][Fennel]], except that instead of compiling to Lua, it compiles to
+Python. I believe I've heard it called "Python, but with more parentheses,"
+which is mostly how I feel about it. It's a very interesting project, but
+adopting the semantics of Python makes for a distinctly non-Lispy Lisp. Then
+again, it's been a good two years or so since I last used it. Take that comment
+with a grain of salt.
+
+In addition to getting the benefits of the Python ecosystem, the editor support
+for Python mostly carries over, too. I've had pleasant experiences with [[https://github.com/tkf/emacs-jedi][Jedi]]
+while writing Hy code.
+
+** Janet
+
+[[https://janet-lang.org/][Janet]] is promising, and I need to look into it more. It's the work of the same
+mastermind behind [[http://fennel-lang.org/][Fennel]], and despite carrying a small runtime, it boasts a
+rather extensive standard library. It's only about three years old, but there
+already seems to be a growing package repository.
+
+It may not be the most suitable choice for what I'm working on, but I can see
+this being a useful scripting language to have in my toolbox.
+
+** Clojure
+
+Clojure's license makes it a complete non starter for me, sorry. Live free or
+die.
+
+* Concluding Statements
+
+Even if I remain undecided, writing this article has given me a good idea of how
+enjoyable I find working with each of the dialects I've mentioned.
+
+The conclusion I'm drawing may seem to be coming out of left field, here, but
+now that I have four implementations of the same program, it's clear to me that
+the differences at the language level are mostly superficial. I've written here
+about how nice it is to have features such as pattern matching and =fold=
+out-of-the-box, but a strength common to all of the Lisps I've described here is
+that they make it possible for one to implement those features on her own. For
+example, if I'm aching for Common Lisp's =&optional= and =&key= arguments in Scheme,
+I can implement that myself with a bit of [[http://catb.org/jargon/html/M/macrology.html][macrology]]. This is why I love Lisp.
+
+Returning to the question I'd initially posed, my choice of dialect shouldn't
+matter. But picking one with decent syntactic abstractions available from the
+get-go will save me the trouble of making my own batteries.
+
+This article has been a collection of unfettered opinions which I believe I have
+properly supported with truths, but if any of my claims are, in fact, erroneous,
+I would encourage you to contact me so that I may piece together an erratum.
+
+A special thanks to [[https://healeycodes.com/][Andrew Healey]] for providing feedback on an early draft of
+this.
+
+* References
+
+[1]: McCarthy, John. "Recursive functions of symbolic expressions and their computation by machine, Part I." /Communications of the ACM/ 3, no. 4 (1960): 184-195. Accessed http://www-formal.stanford.edu/jmc/recursive.pdf.
+
+[2]: Turon, Aaron. "Rust's language ergonomics initiative." Rust Blog, 2014. Accessed https://blog.rust-lang.org/2017/03/02/lang-ergonomics.html.
+
+[3]: Kalibera, Tomas, and Richard Jones. "Rigorous benchmarking in reasonable time." In Proceedings of the 2013 international symposium on memory management, pp. 63-74. 2013. https://kar.kent.ac.uk/33611/45/p63-kaliber.pdf.
+
+[4]: "Charter for working group 1." R7RS-small archive, 2009. Accessed http://www.scheme-reports.org/2009/working-group-1-charter.html
+
+[5]: Shinn, Alex, Cowan, John, Gleckler, Arthur A., Ganz, Steven, Hsu, Aaron W., Lucier, Bradley, Medernach, Emmanuel, Radul, Alexey, Read, Jeffrey T., Rush, David, et al. "6.14. System interface" in "Revised^7 Report on the Algorithmic Language Scheme." pp. 59-61. 2013. Accessed https://small.r7rs.org/attachment/r7rs.pdf.
+
+[6]: Shinn, Alex, Cowan, John, Gleckler, Arthur A., Ganz, Steven, Hsu, Aaron W., Lucier, Bradley, Medernach, Emmanuel, Radul, Alexey, Read, Jeffrey T., Rush, David, et al. "3.5 Proper tail recursion" in "Revised^7 Report on the Algorithmic Language Scheme." pp. 11-12. 2013. Accessed https://small.r7rs.org/attachment/r7rs.pdf.
+
+[7]: "The Common Lisp HyperSpec." LispWorks. Accessed http://www.lispworks.com/documentation/common-lisp.html.
+
+[8]: "ISO/IEC 14882:2017 Programming languages — C++." International Standards Organization, 2017. Accessed https://www.iso.org/standard/68564.html.
+
+[9]: Seibel, Peter. "18. A Few FORMAT Recipes" in /Practical Common Lisp/. 2003. Accessed http://www.gigamonkeys.com/book/a-few-format-recipes.html.
+
+[10]: "Modern Scheme Implementation." Gerbil Scheme. Accessed https://cons.io/.
+
+[11]: Weinholt, Göran. "R7RS versus R6RS." weinholt.se, 2018. Accessed https://weinholt.se/articles/r7rs-vs-r6rs/.
+
+[12]: Verna, Didier. "How to Make Lisp Go Faster than C." IAENG International Journal of Computer Science 32, no. 4 (2006): 499-504. Accessed http://www.iaeng.org/IJCS/issues_v32/issue_4/IJCS_32_4_19.pdf.
+
+[13]: Abelson, Harold, and Gerald Jay Sussman. "Systems with Generic Operations" in /Structure and Interpretation of Computer Programs/. The MIT Press, 1996. Accessed https://web.mit.edu/alexmv/6.037/sicp.pdf.
+
+[fn:1] "Failed" is perhaps somewhat ambiguous here. I put the book down before getting to the second chapter, feeling I wasn't getting as much out of it as I should have been. Nowadays, I attribute this to a general lack of mathematical maturity. I was fourteen at the time, and the closest thing to "rigorous proofs" I had written were the two-column sequential ones you would do in a high school Euclidean geometry class. Coming back to the book now, I've realized that the later sections are largely non-mathematical, and that I probably would have been able to stomach them at that age. That said, I am glad that I came back to the book when I did. The early exercises are enlightening, and I think the additional practice helped me greatly when I went on to study discrete mathematics and algorithms.
+
+[fn:2] From the R6RS guiding principles: Scheme should "allow educators to use the language to teach programming effectively, at various levels and with a variety of pedagogical approaches; and allow researchers to use the language to explore the design, implementation, and semantics of programming languages." These principles do not appear in R5RS or R7RS, or at least they are not worded in the same way. Perhaps there are some differences among those on the Scheme Language Steering Committee regarding public image?
+
+[fn:3] /The C Programming Language/, by Brian Kernighan and Dennis Ritchie.
+
+[fn:4] I'm speaking from relatively little experience. If you have experience with both languages, I'd be interested to hear your take.
+
+[fn:5] As it turns out, [[https://srfi.schemers.org/srfi-1/srfi-1.html][SRFI-1]] does have a less general =fold= procedure. My statement still stands, as SRFI-1 is not part of R7RS (small). Though, both of the general =fold= procedures /are/ part of R7RS (large) "Red Edition". This is an incredibly minor point, and I speak about the triviality of facts like this in the conclusion section.
+
+[fn:6] Though, this wasn't the case for my raytracer. I limited myself to vanilla CL.
+
+* Erratum
+
+*2020-07-20 11:47*: [[https://lonely.town/@wasamasa/104546888811267712][@wasamasa]] pointed out that the Fennel links in the Hy and Janet sections did not point to the Fennel website. I've updated this in the original text, as there's little reason to leave a mistake like that. Thank you!
+
+*2020-07-20 12:26*: [[https://mastodon.sdf.org/web/statuses/104547060370665309][@technomancy]] pointed out a few mistakes I'd made in the Fennel section:
+
+I've removed the following part of my commentary on syntactic destructuring,
+because the first example works perfectly fine if you swap the order of =_= and =[r
+g b]=.
+
+---
+
+Unfortunately, you can't destructure /everywhere/. You can't write this, for
+example:
+
+#+BEGIN_SRC fennel
+(fn write-ppm [image]
+  (print "P3")
+  (print (string.format "%d %d" image.width image.height))
+  (print "255")
+  (each [[r g b] _ (ipairs image.pixels)]
+    (print (string.format "%d %d %d" r g b))))
+#+END_SRC
+
+Rather, you need to dereference first, destructure second.
+
+#+BEGIN_SRC fennel
+(fn write-ppm [image]
+  (print "P3")
+  (print (string.format "%d %d" image.width image.height))
+  (print "255")
+  (for [i 1 (# image.pixels)]
+    (let [[r g b] (. image.pixels i)]
+      (print (string.format "%d %d %d" r g b)))))
+#+END_SRC
+
+---
+
+Additionally, my original description of the state of editor support was
+misleading. It originally read as:
+
+#+BEGIN_QUOTE
+The editor support beyond that is almost non-existent. There's a "go to
+definition" implementation, and you can spawn a Fennel REPL in comint, but
+there's no way to send something from a source code buffer to the REPL.
+#+END_QUOTE
+
+But, as it turns out, there /is/ a way of sending source code to the REPL with =C-c
+C-k=, thanks to =fennel-mode= deriving from =lisp-mode=. So, despite the =fennel-mode=
+source code being a very small file, it packs a punch.
+
+Thanks for the corrections!
+
+*2020-07-20 13:32*: [[https://octodon.social/@cwebber][@cwebber]] noted that my description of Common Lisp as dynamically-scoped could be clearer, as any variables introduced with =let=, =let*=, ..., actually have lexical extent and do not act dynamically by default. Thanks, Chris!
+
+*2020-07-20 17:40*: [[https://mastodon.social/@ekaitz_zarraga/104547997623758493][@ekaitz_zarraga]] pointed out that I'd said "Fennel" when I meant to say "Scheme" in "[y]ou've probably noticed by now, but Fennel doesn't have the old-school LISP syntax that Common Lisp and Fennel [sic] have." Thanks!
+
+*2020-07-20 20:18*: I had made a comment reading "[a]lso, function definitions have to come in order, or your CL compiler is going to yell at you. This is enough to drive me up the wall" in the Common Lisp section. This is true of SLIME when you =C-c C-c=, but it is not the case when you =C-c C-k=, which is what you should be doing to compile a file in SLIME. Nor is it the case for SBCL's =compile-file=. Thanks to [[https://lobste.rs/s/chamtu/many_faces_undying_programming_language#c_9rey5p][travv0]] on lobste.rs and [[https://www.reddit.com/r/lisp/comments/hupqhn/the_many_faces_of_an_undying_programming_language/fyp03t6/][lispm]] on Reddit for pointing this out.

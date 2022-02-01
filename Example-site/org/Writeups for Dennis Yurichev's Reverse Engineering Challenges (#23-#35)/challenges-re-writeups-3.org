@@ -1,0 +1,817 @@
+#+TITLE: Writeups for Dennis Yurichev's Reverse Engineering Challenges (#23-#35)
+#+DATE: <2019-08-18 Sun 10:42>
+#+TAGS: writeup, reverse-engineering, x86
+
+This is the third set of solutions for my self-imposed challenge of completing
+at least fifty of the exercises on Dennis Yurichev's [[https://challenges.re][challenges.re]] by the end of
+the year. The previous set is available [[http:///jakob.space/challenges-re-writeups-2.html][here]].
+
+* Challenge #23
+
+The problem is prefaced with, "[t]his is another implementation of a well-known
+library function, works only in a 64-bit environment." Translating the
+disassembly directly to C reveals unrolled loops, but the intent isn't too
+difficult to figure out.
+
+#+BEGIN_SRC c
+int f(char *a)
+{
+        int i;
+
+        if (a[0] == '\0') {
+                return 0;
+        }
+
+        if (a[1] == (char) 0xff) {
+                return 1;
+        }
+
+        if (a[2] == (char) 0xff) {
+                return 2;
+        }
+
+        if (a[3] == (char) 0xff) {
+                return 3;
+        }
+
+        if (a[4] == (char) 0xff) {
+                return 4;
+        }
+
+        if (a[5] == (char) 0xff) {
+                return 5;
+        }
+
+        i = 0;
+
+        while (a[6] != (char) 0xff) {
+                if (a[7] == (char) 0xff) {
+                        return i + 7;
+                }
+
+                i += 8;
+                a += 8;
+
+                if (a[1] == (char) 0xff) {
+                        return i;
+                }
+
+                if (a[1] == (char) 0xff) {
+                        return i + 1;
+                }
+
+                if (a[2] == (char) 0xff) {
+                        return i + 2;
+                }
+
+                if (a[3] == (char) 0xff) {
+                        return i + 3;
+                }
+
+                if (a[4] == (char) 0xff) {
+                        return i + 4;
+                }
+
+                if (a[5] == (char) 0xff) {
+                        return i + 5;
+                }
+        }
+
+        return i + 6;
+}
+#+END_SRC
+
+=f= returns the index of the first occurrence of =0xff= in =a=. In addition to asking
+for the purpose of the code, the challenge poses a few additional questions.
+
+First: "The code may crash under some specific circumstances. Which are...?" =f=
+will crash in the case that there isn't a 0xff character in the string.
+
+Second: "The code can be easily optimized using SSEx. How?" =movq= can be used to
+dereference the characters of =a=, and the location of the =0xff= character can be
+found using =pcmpeqb=. Actually implementing this is left as an exercise to the
+reader. And I'm not saying that just because writing SIMD by hand makes me want
+to break down and cry... or anything like that...
+
+Finally: "The code will not work correctly on big-endian architectures. How to
+fix it?" In the disassembly, the LSB of =rdx= (=dl=) is treated as the _first_
+character in the sliding window. On a big-endian system, dereferencing the
+window as an integer would mean that the LSB would correspond with the _last_
+character in the window. To fix this, you would need to change which parts of
+the register are being looked at. I realize that's a rather anemic answer, but
+the alternative would be going all-in and implementing =f= on a big-endian
+platform, which I don't really want to do right now.
+
+* Challenge #26
+
+I decided to skip challenges #24 and #25 as they were listed as "Level 2" and
+"Level 3" respectively in terms of difficulty. Challenge #25 in particular
+seemed particularly demanding. Challenge #26, on the other hand, was a
+relatively straightforward bytecode reverse engineering task. Like Challenge
+#14, disassemblies for both .NET and the JVM are given, and as I'm more familiar
+with Java than C# (unfortunately), that's the disassembly I chose to work with.
+
+#+BEGIN_SRC java
+public static byte f(byte a) {
+    return (byte) ((((long) a * 8623620610L) & 1136090292240L) % 1023L);
+}
+#+END_SRC
+
+Again, I'm not familiar with JVM bytecode, so I broke out [[https://en.wikipedia.org/wiki/Java_bytecode_instruction_listings][my favorite JVM
+reference]]. Here are the instructions we're concerned with:
+
+#+BEGIN_SRC java
+iload_0 // load an int value from local 0
+i2l     // convert an int to a long
+l2i     // convert a long to an int
+i2b     // convert an int to a byte
+ldc2_w  // push a constant onto the stack
+lmul    // multiply two longs
+land    // perform a bitwise and on two longs
+lrem    // perform remainder division on two longs
+#+END_SRC
+
+Even if you don't know how the JVM works, I think the purpose of =f= is fairly
+clear as soon as you know what those few instructions do.
+
+I've typically been using Matt Godbolt's amazing [[https://godbolt.org/][Compiler Explorer]] to check my
+solutions, but this time around I used [[http://javabytes.io/][Javabytes]]. The disassembly of my
+translation for =f= matches what was given for the challenge, so I'm quite
+confident in my answer. As for what it does: I began my analysis as I typically
+do, giving the function some test values and observing the output.
+
+#+BEGIN_SRC java
+public static void main(String[] args) {
+    for (int i = 0; i < 256; i++) {
+        System.out.printf("%3i: b\n", i, f((byte) i));
+    }
+}
+
+//   0: 0
+//   1: -128
+//   2: 64
+//   3: -64
+//   4: 32
+// ...
+// 253: 63
+// 254: -65
+// 255: 127
+#+END_SRC
+
+That isn't very telling, but the oscillating sign gives me an idea.
+
+#+BEGIN_SRC java
+public static String toPaddedBinary(byte a) {
+    String s = String.format("%8s", Integer.toBinaryString(a));
+    s = s.replace(' ', '0');
+    return s.substring(s.length() - 8, s.length());
+}
+
+public static void main(String[] args) {
+    for (int i = 0; i < 256; i++) {
+        System.out.printf("%s: %s\n", toPaddedBinary((byte) i), toPaddedBinary(f((byte) i)));
+    }
+}
+
+// 00000000: 00000000
+// 00000001: 10000000
+// 00000010: 01000000
+// ...
+// 11111101: 10111111
+// 11111110: 01111111
+// 11111111: 11111111
+#+END_SRC
+
+So =f= reverses the bits of =a=.
+
+* Challenge #27
+
+This challenge threw me for a bit of a loop, as it didn't give the usual amd64
+output from GCC 4.9. Rather an i386 disassembly from MSVC 2010 was given,
+alongside an arm64 disassembly from GCC 4.9. I tried both, but had some
+significant trouble with the MSVC disassembly as it seemed to be dealing with
+64-bit integers on a 32-bit architecture.
+
+After quickly reviewing CDOT's [[https://wiki.cdot.senecacollege.ca/wiki/Aarch64_Register_and_Instruction_Quick_Start#General-Purpose_Registers][AArch64 reference]] to get an idea of register
+widths, this is the translation came up with:
+
+#+BEGIN_SRC c
+int f(int a)
+{
+    return (((int) (((long) a * 0xc64b2279) >> 32)) + a) >> 9 - (a >> 31);
+}
+#+END_SRC
+
+I'm not particularly confident in this, however, as the behavior of =f= is to
+return \(floor(a / 289)\). I suspect my poor understanding of the [[http://infocenter.arm.com/help/topic/com.arm.doc.dui0068b/CIHBEAGE.html][flexible
+second operand]] (i.e. in =sub w0, w1, w0, asr 31=) is what gave me me the most
+trouble. Perhaps this is a challenge I should return to when I properly learn
+ARM.
+
+I tried a more direct translation to Python,
+
+#+BEGIN_SRC python
+def test_f(a):
+    result = a * 0xc64b2279
+    upper = result & 0xffffffff00000000
+    lower = result & 0xffffffff
+    return ((upper + lower) >> 9) + \
+        (((upper + lower) >> 9) >> 31)
+
+fmt = lambda n: bin(n)[2:].rjust(32, '0')
+
+for i in range(256):
+    print("{}\n{}\n".format(fmt(i), fmt(test_f(i))))
+#+END_SRC
+
+which didn't yield any recognizable patterns.
+
+Actually, before implementing it in Python, I implemented it in Emacs Lisp (I
+might have been waiting on Python to compile? I don't remember).
+
+#+BEGIN_SRC elisp
+(defun test-f (a)
+  (let* ((result (* a #xc64b2279))
+         (upper (logand result #xffffffff00000000))
+         (lower (logand result #xffffffff)))
+    (+ (ash (+ upper lower) 9)
+       (ash (ash (+ upper lower) 9) 31))))
+#+END_SRC
+
+Either way, this challenge wasn't fruitful.
+
+* Challenge #28
+
+I suspect that this challenge was made a bit easier by GCC's optimizations. The
+amd64 disassembly includes two unused functions, =f2= and =my_memdup= -- they're
+used in some of the other disassemblies, but I chose to ignore them.
+
+#+BEGIN_SRC c
+#include <string.h>
+#include <stdlib.h>
+
+int f1(int *a, int *b)
+{
+        return *a > *b ? 0 : -1;
+}
+
+int f_main(void *src, int n)
+{
+        int tmp;
+        char *dst;
+
+        dst = malloc(n * sizeof(int));
+        memcpy(dst, src, n * sizeof(int));
+        qsort(dst, n, sizeof(int), f1);
+
+        if (n > 1) {
+                tmp = dst[n >> 1] + \
+                        dst[n >> 1 - 1];
+                return (tmp + (tmp >> 31)) >> 1;
+        }
+
+        return dst[0];
+}
+#+END_SRC
+
+I've started to see this =(tmp + (tmp >> 31)) >> 1= idiom rather frequently, so I
+decided to finally look it up, coming across [[https://stackoverflow.com/questions/40638335/why-does-the-compiler-generate-a-right-shift-by-31-bits-when-dividing-by-2][this]] Stack Overflow answer. I'm
+glad I did, because realizing that it carries out signed integer division by two
+makes this exercise far more clear.
+
+#+BEGIN_SRC c
+#include <string.h>
+#include <stdlib.h>
+
+int f1(int *a, int *b)
+{
+        return *a > *b ? 0 : -1;
+}
+
+int f_main(void *src, int n)
+{
+        char *dst;
+
+        dst = malloc(n * sizeof(int));
+        memcpy(dst, src, n * sizeof(int));
+        qsort(dst, n, sizeof(int), f1);
+
+        if (n > 1) {
+                return (dst[n / 2] + dst[n / 2 - 1]) / 2;
+        }
+
+        return dst[0];
+}
+#+END_SRC
+
+=f_main= returns the [[https://en.wikipedia.org/wiki/Median][median]] of a set of values.
+
+* Challenge #30
+
+I have, once again, skipped another challenge that was being listed as "level
+2," which brings us to the thirtieth challenge. This one is strikingly different
+from the other challenges I've covered here; rather than being asked to describe
+what a program does, the instruction read:
+
+"This program requires a password. Try to find it.
+
+As an additional exercise, try to change the password by patching the executable
+file. Also try using one with a different length. What is the shortest possible
+password here?
+
+Also try to crash the program using only string input."
+
+We're given several links to downloads. Binaries are provided for 32-bit
+Microsoft Windows, Mac OS X, and i386/mips Linux. I went with i386 Linux, as I'd
+be able to run the challenge natively.q
+
+#+BEGIN_SRC
+jakob@Epsilon /tmp $ sha256sum password1
+96b8110208d61c7ac586910ebad22ef2e4bbeb867e6d6429967846698b9d02fc  password1
+#+END_SRC
+
+Being faced with a binary, I was tempted to use this as an opportunity to try
+out [[https://ghidra-sre.org/][Ghidra]], but while I waited for OpenJDK 11 to download, I peered inside with
+radare2 and decided that it wasn't worth the trouble. Here's the disassembly,
+according to radare:
+
+#+BEGIN_SRC
+[0x080484ed]> pdf
+            ;-- eip:
+┌ (fcn) main 149
+│   main ();
+│           ; var int local_4h @ esp+0x4
+│           ; var int local_1ch @ esp+0x1c
+│           ; var int local_9ch @ esp+0x9c
+│           ; DATA XREF from 0x08048407 (entry0)
+│           0x080484ed      55             pushl %ebp
+│           0x080484ee      89e5           movl %esp, %ebp
+│           0x080484f0      83e4f0         andl $0xfffffff0, %esp
+│           0x080484f3      81eca0000000   subl $0xa0, %esp
+│           0x080484f9      65a114000000   movl %gs:0x14, %eax         ; [0x14:4]=-1 ; 20
+│           0x080484ff      8984249c0000.  movl %eax, local_9ch
+│           0x08048506      31c0           xorl %eax, %eax
+│           0x08048508      c70424208604.  movl $str.enter_password:, 0(%esp) ; [0x8048620:4]=0x65746e65 ; "enter password:"
+│           0x0804850f      e89cfeffff     calll sym.imp.puts          ; int puts(const char *s)
+│           0x08048514      8d44241c       leal local_1ch, %eax        ; 0x1c ; 28
+│           0x08048518      89442404       movl %eax, local_4h
+│           0x0804851c      c70424308604.  movl $0x8048630, 0(%esp)    ; [0x8048630:4]=0x6e007325
+│           0x08048523      e8b8feffff     calll sym.imp.__isoc99_scanf
+│           0x08048528      83f801         cmpl $1, %eax               ; 1
+│       ┌─< 0x0804852b      740c           je 0x8048539
+│       │   0x0804852d      c70424338604.  movl $str.no_password_supplied, 0(%esp) ; [0x8048633:4]=0x70206f6e ; "no password supplied"
+│       │   0x08048534      e877feffff     calll sym.imp.puts          ; int puts(const char *s)
+│       │   ; JMP XREF from 0x0804852b (main)
+│       └─> 0x08048539      c74424044886.  movl $str.metallica, local_4h ; [0x8048648:4]=0x6174656d ; "metallica"
+│           0x08048541      8d44241c       leal local_1ch, %eax        ; 0x1c ; 28
+│           0x08048545      890424         movl %eax, 0(%esp)
+│           0x08048548      e843feffff     calll sym.imp.strcmp        ; int strcmp(const char *s1, const char *s2)
+│           0x0804854d      85c0           testl %eax, %eax
+│       ┌─< 0x0804854f      750e           jne 0x804855f
+│       │   0x08048551      c70424528604.  movl $str.password_is_correct, 0(%esp) ; [0x8048652:4]=0x73736170 ; "password is correct"
+│       │   0x08048558      e853feffff     calll sym.imp.puts          ; int puts(const char *s)
+│      ┌──< 0x0804855d      eb0c           jmp 0x804856b
+│      ││   ; JMP XREF from 0x0804854f (main)
+│      │└─> 0x0804855f      c70424668604.  movl $str.password_is_not_correct, 0(%esp) ; [0x8048666:4]=0x73736170 ; "password is not correct"
+│      │    0x08048566      e845feffff     calll sym.imp.puts          ; int puts(const char *s)
+│      │    ; JMP XREF from 0x0804855d (main)
+│      └──> 0x0804856b      8b94249c0000.  movl local_9ch, %edx        ; [0x9c:4]=-1 ; 156
+│           0x08048572      653315140000.  xorl %gs:0x14, %edx
+│       ┌─< 0x08048579      7405           je 0x8048580
+│       │   0x0804857b      e820feffff     calll sym.imp.__stack_chk_fail ; void __stack_chk_fail(void)
+│       │   ; JMP XREF from 0x08048579 (main)
+│       └─> 0x08048580      c9             leave
+└           0x08048581      c3             retl
+#+END_SRC
+
+As you can see, this is just like any other "easy crackme." A simple string
+comparison. radare2 doesn't automatically decode 0x8048630 as a string, but it's
+trivial to obtain its value.
+
+#+BEGIN_SRC
+:> psz @ 0x8048630
+%s
+#+END_SRC
+
+Translating it into C is similarly trivial.
+
+#+BEGIN_SRC c
+#include <stdio.h>
+#include <string.h>
+
+int main(void)
+{
+        char buf[128];
+        puts("enter password:");
+        if (scanf("%s", buf) != 1) {
+                puts("no password supplied");
+        }
+        if (strcmp(buf, "metallica") == 0) {
+                puts("password is correct");
+        } else {
+                puts("password is not correct");
+        }
+}
+#+END_SRC
+
+I do have to complement Yurichev's choice of strong passwords. \m/
+
+One may wonder where I pulled =128= from. Our stack layout looks something like
+this:
+
+#+BEGIN_SRC prog
++-------------------------------------+
+|%esp                                 |
+|Scratch space for function arguments.|
++-------------------------------------+
+|%esp + 0x1c                          |
+|Buffer starts here                   |
+|...                                  |
+|Buffer ends here                     |
++-------------------------------------+
+|%esp + 0x9c                          |
+|Stack canary, perhaps?               |
++-------------------------------------+
+|%esp + I DON'T CARE ANYMORE          |
+|Here be dragons.                     |
++-------------------------------------+
+#+END_SRC
+
+radare2 is kind enough to automatically name local variables according to their
+position in the stack layout, so I was able to derive this from the names
+=local_1ch= and =local_9ch=. =local_4h= isn't really a local variable -- it looks like
+one, but that's just how the compiler decided to set up arguments for the
+various function calls (dereferencing the stack pointer, as opposed to using
+=push=). Anyway, subtracting =0x9c= from =0x1c= gets you 128 -- hence, the buffer size
+in my translation.
+
+It's pretty easy to patch the password, since =strcmp= operates on C strings. Just
+patch the characters. No sort of length needs to be adjusted since they're
+null-terminated. The shortest possible password would be zero characters long,
+which would be achieved by patching in a null byte at the 'm' in "metallica".
+This can be done however you like, though radare makes it easy if you've opened
+the file in "write mode": just seek to the location of the 'm' and =wx 00=.
+Crashing the program is similarly easy, since there are no bounds checks on the
+call to =scanf=.
+
+#+BEGIN_SRC
+jakob@Epsilon /tmp $ python -c "print('a' * 256)" | ./test
+enter password:
+password is not correct
+Segmentation fault
+#+END_SRC
+
+* Challenge #31
+
+Yowch. We're only given disassemblies from MSVC this time.
+
+#+BEGIN_SRC c
+double f(double a, int b)
+{
+        double cur;
+        cur = 1.0;
+        while (((double) (((int) (cur - a)) - b)) <= 0.001)
+                cur = (a + 1.0) * 0.5;
+        return cur;
+}
+#+END_SRC
+
+Once again, I deferred to [[https://float.exposed/][float.exposed]] to decode the floating-point constant
+values. =__real@3ff0000000000000= is =1.0=, =__real@3f50624dd2f1a9fc= is approximately
+=0.001=, and =__real@3fe0000000000000= is =0.5=. I also needed to look up most of the
+SIMD instructions. =cvttsd2si= converts a double to an int, =cdq= converts an int
+into a long, =cvtdq2pd= converts an int to a double, and =comisd= is comparable to
+=cmp=.
+
+This converges for very few values. Which is a pain, since this translation
+gives me some very promising output in [[https://godbolt.org/][Compiler Explorer]]. But considering the
+value that the loop gets stuck on, I suspect that =f= averages =a= and =b=.
+
+* Challenge #32
+
+We're given a hint that, "[t]his is a standard C library function. The source
+code is taken from MSVC 2010."
+
+#+BEGIN_SRC c
+#include <stddef.h>
+
+char *f(char *a, char *b)
+{
+        char *cur;
+        char *a_cur;
+        char *b_cur;
+
+        cur = a;
+
+        if (*b == '\0') {
+                return a;
+        }
+
+        while (*cur != '\0') {
+                a_cur = cur;
+                b_cur = b;
+
+                while (*a_cur != '\0' && *b_cur != '\0' && *a_cur == *b_cur) {
+                        a_cur++;
+                        b_cur++;
+                }
+
+                if (*b_cur == '\0') {
+                        return cur;
+                }
+
+                cur++;
+        }
+
+        return NULL;
+}
+#+END_SRC
+
+I think the translation makes the purpose of this function reasonably clear, but
+the hint means I can verify my work against C's tiny standard library. =f= is
+obviously one of the library's [[https://en.wikipedia.org/wiki/C_string_handling][string functions]]. Can you guess which one?
+
+(My answer is that =f= is an implementation of =strstr=.)
+
+* Challenge #33
+
+What gave it away for me this time was the "crypto" tag. I stopped in my
+translation efforts about here,
+
+#+BEGIN_SRC c
+void f(void *a, void *b, void *c)
+{
+        int mushroom; // _k0
+        int bean;     // _k1
+        int tomato;   // _k2
+        int corn;     // _k3
+
+        // eax = a[0]
+        // ecx = a[1]
+
+        mushroom = b[0];
+        bean = b[1];
+
+        // esi = b[3];
+        // edx = 0;
+
+        tomato = b[2];
+        corn = b[3];
+
+        // edi = 32;
+
+        // LL8
+        esi = ecx >> 5 + bean;
+        ebx = ecx << 4 + mushroom;
+        edx -= 0x61c88647;
+
+        esi ^= ebx;
+        ebx = ecx + edx;
+        esi ^= ebx;
+
+        eax += esi;
+
+        esi = eax >> 5 + corn;
+        ebx = eax << 4 + tomato;
+
+        esi ^= ebx;
+        ebx = eax + edx;
+        esi ^= ebx;
+
+        ecx += esi;
+        edi--;
+
+        // When edi == 0: c[0] = eax, c[1] = ecx
+}
+#+END_SRC
+
+and decided to do a search for '0x61c88647 hash'. This yields a few interesting
+results, such as [[https://stackoverflow.com/questions/38994306/what-is-the-meaning-of-0x61c88647-constant-in-threadlocal-java][one]] describing the constant used in ThreadLocal.java's
+implementation Fibonacci hashing and [[https://softwareengineering.stackexchange.com/questions/63595/tea-algorithm-constant-0x9e3779b9-said-to-be-derived-from-golden-ratio-but-the][another]] describing the constants used in
+the Tiny Encryption Algorithm.
+
+This immediately set off bells for me. I read Bruce Schneier's /Applied
+Cryptography/ some years back and was instantly reminded that TEA uses [[https://en.wikipedia.org/wiki/Block_cipher#Operations][ARX]] with
+shifts of =5= and =4=. If you pull up Wikipedia's reference code for TEA encryption,
+you'll be greeted with the following:
+
+#+BEGIN_SRC c
+void encrypt (uint32_t v[2], uint32_t k[4]) {
+    uint32_t v0=v[0], v1=v[1], sum=0, i;           /* set up */
+    uint32_t delta=0x9E3779B9;                     /* a key schedule constant */
+    uint32_t k0=k[0], k1=k[1], k2=k[2], k3=k[3];   /* cache key */
+    for (i=0; i<32; i++) {                         /* basic cycle start */
+        sum += delta;
+        v0 += ((v1<<4) + k0) ^ (v1 + sum) ^ ((v1>>5) + k1);
+        v1 += ((v0<<4) + k2) ^ (v0 + sum) ^ ((v0>>5) + k3);
+    }                                              /* end cycle */
+    v[0]=v0; v[1]=v1;
+}
+#+END_SRC
+
+Armed with this, I can confidently say that =f= is an implementation of TEA
+encryption with a schedule constant of =0x61c88647=.
+
+* Challenge #34
+
+Another crypto challenge. This time, we're told that "[t]his is a well-known
+cryptographic algorithm from the past." The disassembly was simple enough that I
+thought to translate it into standard mathematical notation rather than C, but
+it turned out to be far less helpful than the equivalent C.
+
+#+BEGIN_SRC c
+uint16_t f(uint16_t a)
+{
+        uint16_t tmp;
+
+        tmp = a << 2;
+        tmp ^= a;
+        tmp <<= 1;
+        tmp ^= a;
+        tmp <<= 2;
+        tmp ^= a;
+
+        return ((tmp & 32) << 10) | (a >> 1);
+}
+#+END_SRC
+
+That said, I'm not familiar with the particular algorithm. There's a clear
+pattern, but I'm not sure where to start looking. Is it a hash function? Some
+kind of bastardized XOR encryption? Who knows.
+
+* Challenge #35
+
+This was a tough one. I'll give my initial translation to C and explain where I
+went wrong:
+
+#+BEGIN_SRC c
+#include <strings.h>
+#include <stdio.h>
+
+int f(int x, int y)
+{
+        int a, b;
+
+        if (x == 0) {
+                return y;
+        }
+
+        if (y == 0) {
+                return x;
+        }
+
+        a = x >> ffs(x);
+        b = y >> ffs(y);
+
+        while (a != b) {
+                if (a < b) {
+                        SWAP(a, b);
+                }
+
+                if (a == 1) {
+                        break;
+                }
+
+                b = (b - a) >> ffs(b - a);
+        }
+
+        return a << ffs(x | y);
+}
+#+END_SRC
+
+One thing worth remarking on in the disassembly is this:
+
+#+BEGIN_SRC asm
+    xor esi, edx
+    xor edx, esi
+    xor esi, edx
+#+END_SRC
+
+This is the [[https://en.wikipedia.org/wiki/XOR_swap_algorithm][XOR swap algorithm]]. In an attempt to make the translation more
+clear, I replaced it with a (non-existent) =SWAP= macro. =ffs= is also a POSIX
+extension that [[https://stackoverflow.com/questions/757059/position-of-least-significant-bit-that-is-set][corresponds nicely]] to the =bsf= instruction.
+
+The issue? I've been reading these MSVC disassemblies wrong the whole time. Take
+this instruction, for example: =mov edx, DWORD PTR _y$[esp+4]=. I'd never actually
+done out the calculations. As it turns out, =_rt$2[esp+8]= aliases with =y=. I
+thought that =_rt$2= was a distinct variable and that the compiler was storing to
+some local variable but never using it. This isn't the case, hence why the
+translation doesn't work as intended.
+
+What I need to start doing for these MSVC disassemblies is translating them into
+something I can assemble.
+
+#+BEGIN_SRC asm
+global f
+f:
+    push ecx
+    push esi
+    mov esi, DWORD [esp+12]
+    test esi, esi
+    jne init
+    mov eax, DWORD [esp+16]
+    pop esi
+    pop ecx
+    ret
+init:
+    mov edx, DWORD [esp+16]
+    mov eax, esi
+    test edx, edx
+    je exit
+    or eax, edx
+    push edi
+    bsf edi, eax
+    bsf eax, esi
+    mov ecx, eax
+    mov DWORD [esp+8], eax
+    bsf eax, edx
+    shr esi, cl
+    mov ecx, eax
+    shr edx, cl
+    mov DWORD [esp+16], eax
+    cmp esi, edx
+    je return
+lp:
+    jbe skip
+    xor esi, edx
+    xor edx, esi
+    xor esi, edx
+skip:
+    cmp esi, 1
+    je return
+    sub edx, esi
+    bsf eax, edx
+    mov ecx, eax
+    shr edx, cl
+    mov DWORD [esp+16], eax
+    cmp esi, edx
+    jne lp
+return:
+    mov ecx, edi
+    shl esi, cl
+    pop edi
+    mov eax, esi
+exit:
+    pop esi
+    pop ecx
+    ret 0
+#+END_SRC
+
+Actually, I should be doing this for all of the challenges... Anyway, observing
+a few test values for =f=:
+
+#+BEGIN_SRC prog
+f(1, 1) = 1
+f(1, 2) = 1
+f(1, 3) = 1
+f(1, 4) = 1
+f(1, 5) = 1
+f(1, 6) = 1
+f(1, 7) = 1
+f(1, 8) = 1
+f(1, 9) = 1
+...
+f(1, 252) = 1
+f(1, 253) = 1
+f(1, 254) = 1
+f(1, 255) = 1
+f(2, 1) = 1
+f(2, 2) = 2
+f(2, 3) = 1
+f(2, 4) = 2
+f(2, 5) = 1
+f(2, 6) = 2
+f(2, 7) = 1
+f(2, 8) = 2
+f(2, 9) = 1
+f(2, 10) = 2
+f(2, 11) = 1
+f(2, 12) = 2
+...
+f(9, 1) = 1
+f(9, 2) = 1
+f(9, 3) = 3
+f(9, 4) = 1
+f(9, 5) = 1
+f(9, 6) = 3
+f(9, 7) = 1
+f(9, 8) = 1
+f(9, 9) = 9
+...
+f(10, 1) = 1
+f(10, 2) = 2
+f(10, 3) = 1
+f(10, 4) = 2
+f(10, 5) = 5
+f(10, 6) = 2
+f(10, 7) = 1
+f(10, 8) = 2
+f(10, 9) = 1
+f(10, 10) = 10
+f(10, 11) = 1
+f(10, 12) = 2
+...
+#+END_SRC
+
+It took me a while, but I eventually noticed the pattern. =f= is the [[https://en.wikipedia.org/wiki/Greatest_common_divisor][greatest
+common divisor]] function.

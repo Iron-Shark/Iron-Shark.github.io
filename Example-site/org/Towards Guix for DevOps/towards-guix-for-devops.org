@@ -1,0 +1,8 @@
+#+TITLE: Towards Guix for DevOps
+#+DATE: <2019-07-13 Sat 16:11>
+#+TAGS: writeup, programming, functional-programming, linux, guix, lisp, scheme, guile
+#+CROSSPOST: https://www.gnu.org/software/guix/blog/2019/towards-guix-for-devops/
+
+Hey, there! I'm Jakob, a Google Summer of Code intern and new contributor to
+Guix. Since May, I've been working on a DevOps automation tool for the Guix
+System, which we've been calling guix deploy.

@@ -1,0 +1,1150 @@
+#+TITLE: Writeups for Dennis Yurichev's Reverse Engineering Challenges (#36-#74)
+#+DATE: <2019-12-29 Sun 19:55>
+#+TAGS: writeup, reverse-engineering, x86
+
+This is the fourth and final set of for my self-imposed challenge of completing
+at least fifty of the exercises on Dennis Yurichev's [[https://challenges.re][challenges.re]] by the end of
+the year. The previous set is available [[http:///jakob.space/challenges-re-writeups-3.html][here]].
+
+We'll actually be covering twenty challenges in this one. I'd been so busy with
+school that I forgot to make a post when I hit forty.
+
+* Challenge #36
+
+The description this time describes that this is "[a] well-known algorithm
+again. What does it do? Also, take notice that the code for x86 uses FPU, but
+SIMD instructions are used instead in the x64 code. That's OK."
+
+#+BEGIN_SRC c
+long state = 0x12345678;
+
+float f1(void)
+{
+        state = state * 0x19660d + 0x3c6ef35f;
+        return ((float) ((state & 0x7fffff) | 0x40000000)) - 3.0f;
+}
+
+void f(void)
+{
+        int i;
+        int count;
+        float a;
+        float b;
+
+        for (i = 0, count = 0; i < 1000000; i++) {
+                a = f1();
+                b = f1();
+
+                if (a * a + b * b > 1.0f) {
+                        count++
+                }
+        }
+
+        ((float) (((double) count) * 2.25) / 10.9073486328125);
+}
+#+END_SRC
+
+I thought this was a lame challenge. The floating point operations of =f1= have
+been optimized to the point that it's unrecognizable, so if you aren't familiar
+with the standard bit-twiddling tricks that GCC uses to speed up floating-point
+operations, you aren't going to be able to come up with anything meaningful --
+especially since neither function take parameters. My response? =f= returns the
+constant value =206282.937500=.
+
+I thought this might be the [[https://en.wikipedia.org/wiki/Fast_inverse_square_root][fast inverse square root]], but I don't believe it is.
+
+* Challenge #37
+
+Ah, another challenge for which the description is that it is a "[w]ell-known
+function" and only x86 disassembly given is from MSVC. Fortunately, this one is
+not too difficult.
+
+#+BEGIN_SRC c
+int f(int a, int b)
+{
+        int i;
+        int n;
+
+        if (a == 0) {
+                return b + 1;
+        }
+
+        n = b;
+        i = a;
+
+        do {
+                if (n == 0) {
+                        n = 1;
+                } else {
+                        n = f(i, n - 1);
+                }
+        } while (--i != 0);
+
+        return n + 1;
+}
+#+END_SRC
+
+This is the Ackermann function, albeit using a loop rather than a direct
+translation of the Ackermann–Péter function to code.
+
+To answer Yurichev's additional questions, a stack overflow occurs if 4 and 2
+are supplied as input because those are [[https://www.wolframalpha.com/input/?i=Ackermann(4,2)][absurd parameters for this function]], and
+this function bears the error of not enforcing the constraints given in the
+definition of the Ackermann–Péter function.
+
+* Challenge #38
+
+Fun. Another challenge provided as a binary.
+
+#+BEGIN_SRC prog
+jakob@Upsilon ~ $ sha256sum 17
+8f73f329e0988968a9fa40f61da906e83b46817bcb5c0e93f7e95aa74c30e8e0  17
+jakob@Upsilon ~ $ file 17
+17: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 2.6.18, BuildID[sha1]=bdeac54f2d98db38d7a63a43f1c41857432686c4, stripped
+#+END_SRC
+
+I stopped a bit early because, for once, the question wasn't "[w]hat does this
+code do?", but was instead, "[t]his program prints some information to stdout,
+each time different. What is that?"
+
+#+BEGIN_SRC c
+#include <stdlib.h>
+#include <time.h>
+
+static time_t current_time;
+
+int fcn.004006c4(void)
+{
+        return current_time = current_time * 0x19660d * 0x3c6ef35f;
+}
+
+int main(int argc, char **argv)
+{
+        char *s2;
+        void **s1;
+        int var_1ch;
+        int var_18h;
+        int var_11h;
+
+        s2 = malloc(230);
+        s1 = malloc(80);
+        var_1ch = 0;
+
+        while (var_1ch <= 9) {
+                s1[var_1ch++] = calloc(230, 1);
+        }
+
+        current_time = time(NULL);
+
+        var_1ch = 0;
+        while (var_1ch <= 230) {
+                var_11h = fcn.00400b60(fcn.004006c4());
+                s2[var_1ch++] = var_11h & 1;
+        }
+
+        var_1ch = 0;
+        while (1) {
+                fcn.00400970(s2, 230);
+                fcn.0040072a(s2, 230, 110);
+
+                var_18h = 0;
+                while (var_18h <= 8) {
+                        if (!memcmp(s1[var_18h++], s2, 230)) {
+                                exit(0);
+                        }
+                }
+
+                var_18h = 0;
+                while (var_18h <= 8) {
+                        memcpy(s1[var_18h], s1[++var_18h], 230);
+                }
+
+                memcpy(s1[9], s2, 230);
+                var_1ch++;
+        }
+}
+#+END_SRC
+
+The only nondeterminism I saw in the disassembly was from =time=. The actual
+output of the program is incomprehensible -- appearing to be some sort of
+ASCII-art fractal. For this reason, I'm concluding that the information printed
+to =stdout= is the current time.
+
+* Challenge #39
+
+The description for this challenge got me excited. "This program requires a
+password. Find it."
+
+#+BEGIN_SRC prog
+jakob@Upsilon ~ $ sha256sum password2
+8c8365f316de896c453511c5f484755600208b87ad0f1595a2900cbf5a36db24  password2
+#+END_SRC
+
+=main= is simple enough that I feel I can omit the: it reads in a password with
+=scanf=, and then checks it with the following snippet.
+
+#+BEGIN_SRC prog
+│           0x0804853e      e87affffff     calll fcn.080484bd
+│           0x08048543      3df8010000     cmpl $0x1f8, %eax           ; 504
+#+END_SRC
+
+We want to find some =password= such that =fcn.080484bd(password) = 0x1f8=.
+Peeking into =fcn.080484bd=, I was a little disappointed.
+
+#+BEGIN_SRC prog
+┌ (fcn) fcn.080484bd 46
+│   fcn.080484bd (int32_t arg_8h);
+│           ; var int32_t var_4h @ ebp-0x4
+│           ; arg int32_t arg_8h @ ebp+0x8
+│           ; CALL XREF from main @ 0x804853e
+│           0x080484bd      55             pushl %ebp
+│           0x080484be      89e5           movl %esp, %ebp
+│           0x080484c0      83ec10         subl $0x10, %esp
+│           0x080484c3      c745fc000000.  movl $0, var_4h
+│       ┌─< 0x080484ca      eb10           jmp 0x80484dc
+│       │   ; CODE XREF from fcn.080484bd @ 0x80484e4
+│      ┌──> 0x080484cc      8b4508         movl arg_8h, %eax           ; [0x8:4]=-1 ; 8 ; edx
+│      ╎│   0x080484cf      0fb600         movzbl 0(%eax), %eax
+│      ╎│   0x080484d2      0fbec0         movsbl %al, %eax
+│      ╎│   0x080484d5      0145fc         addl %eax, var_4h
+│      ╎│   0x080484d8      83450801       addl $1, arg_8h             ; [0x8:4]=-1 ; 1
+│      ╎│   ; CODE XREF from fcn.080484bd @ 0x80484ca
+│      ╎└─> 0x080484dc      8b4508         movl arg_8h, %eax           ; [0x8:4]=-1 ; 8 ; edx
+│      ╎    0x080484df      0fb600         movzbl 0(%eax), %eax
+│      ╎    0x080484e2      84c0           testb %al, %al
+│      └──< 0x080484e4      75e6           jne 0x80484cc               ; likely
+│           0x080484e6      8b45fc         movl var_4h, %eax           ; edx
+│           0x080484e9      c9             leave                       ; edx
+└           0x080484ea      c3             retl                        ; edx
+#+END_SRC
+
+Do I even need to provide a C translation? The disassembly should be glaringly
+obvious: this "check" function just returns the sum of the string argument's
+individual bytes. Coming up with a valid password is trivial.
+
+#+BEGIN_SRC prog
+jakob@Upsilon ~ $ ./password2
+enter password:
+AAAAAAA1
+password is correct
+#+END_SRC
+
+The problem also suggests that I "try to change the password by patching the
+executable file," but this doesn't invokve anything more than changing the word
+at =0x08048544=.
+
+* Challenge #41
+
+The question this time is: "[t]his program prints some numbers to stdout. What
+is it?"
+
+#+BEGIN_SRC prog
+jakob@Upsilon ~ $ file problem
+problem: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 2.6.24, BuildID[sha1]=a89ecf1ae2f2474548d09ca3ebccd7db4162fa1e, stripped
+jakob@Upsilon ~ $ sha256sum problem
+ab3864e8fceeffe4b166cb7481332e88a1fe90b6a406e635c6921119c91a00fd  problem
+#+END_SRC
+
+I wrote a C translation without running the program. In retrospect, this wasn't
+a bad idea. The calculation is a function of some integer, but the binary spits
+out subsequent numbers with no sort of delimitation. Having the C translation
+means that I could add a =printf("\n");= after the call to =fcn_00400536(var_4h++);=
+and get output similar to the following:
+
+#+BEGIN_SRC prog
+jakob@Upsilon ~ $ /tmp/test
+1
+
+2
+1
+
+3
+10
+5
+16
+8
+4
+2
+1
+
+4
+2
+1
+
+5
+16
+8
+4
+2
+1
+#+END_SRC
+
+Here's the C translation.
+
+#+BEGIN_SRC c
+void fcn_00400536(int a)
+{
+        printf("%d\n", a);
+        while (a != 1) {
+                if (a & 1 != 0) {
+                        a = a * 3 + 1;
+                } else {
+                        a >>= 1;
+                }
+                printf("%d\n", a);
+        }
+}
+
+int main(int argc, char **argv)
+{
+        int var_4h;
+        var_4h = 1;
+        while (var_4h <= 15) {
+                fcn_00400536(var_4h++);
+        }
+        return var_4h;
+}
+#+END_SRC
+
+We can pick any interesting sequence and plug it into [[https://oeis.org/search?q=3%2C10%2C5%2C16%2C8%2C4%2C2%2C1&language=english&go=Search][OEIS]], which identifies
+=fcn_00400536= as "A070165: Irregular triangle read by rows giving trajectory of n
+in Collatz problem." Ah, yes. This is looking familiar now. This is the famously
+unsolved problem in mathematics, the [[https://en.wikipedia.org/wiki/Collatz_conjecture][Collatz conjecture]].
+
+* Challenge #43
+
+#+BEGIN_SRC prog
+jakob@Upsilon ~ $ file unknown_utility_2_3
+unknown_utility_2_3: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux.so.2, for GNU/Linux 2.6.24, BuildID[sha1]=cb74037dd37694879f6250bfb5623c273ef68ca6, stripped
+jakob@Upsilon ~ $ sha256sum unknown_utility_2_3
+9d3df3be78f21971059ba2d9973a1358865ccbe2f47f78fc5800779d6f6083fe  unknown_utility_2_3
+#+END_SRC
+
+I really wasn't feeling it today, so I took the easy way out and just ran the
+binary provided on a test file. It spits out a floating point number, which
+seems to decrease as the file becomes less interesting. Just a hunch, but maybe
+it's binary entropy?
+
+#+BEGIN_SRC prog
+jakob@Upsilon ~ $ python -c "print('a' * 256)" > test.txt
+jakob@Upsilon ~ $ ./unknown_utility_2_3 test.txt
+0.036753
+jakob@Upsilon ~ $ rahash2 -a entropy test.txt
+test.txt: 0x00000000-0x00000100 entropy: 0.03675295
+jakob@Upsilon ~ $ dd bs=256 count=1 if=/dev/urandom > test.txt
+1+0 records in
+1+0 records out
+256 bytes copied, 7.0438e-05 s, 3.6 MB/s
+jakob@Upsilon ~ $ ./unknown_utility_2_3 test.txt
+7.069718
+jakob@Upsilon ~ $ rahash2 -a entropy test.txt
+test.txt: 0x00000000-0x000000ff entropy: 7.06971784
+#+END_SRC
+
+Well, that's an answer I'm certainly happy with.
+
+* Challenge #48
+
+It looks like we're starting to get into the realm of =win32=. The question for
+this challenge is, "[w]hat does this win32-function do?"
+
+#+BEGIN_SRC asm
+main:
+    push 0xFFFFFFFF
+    call MessageBeep
+    xor  eax,eax
+    retn
+#+END_SRC
+
+This is pretty simple. It's a wrapper for =MessageBeep=. According to [[https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-messagebeep][MSDN]], the
+=0xFFFFFFFF= parameter produces "[a] simple beep. If the sound card is not
+available, the sound is generated using the speaker."
+
+* Challenge #49
+
+Another rather simple one. The disassembly for this challenge is given in AT&T
+syntax, which is my preferred way of reading x86 assembly.
+
+#+BEGIN_SRC asm
+main:
+        pushq   %rbp
+        movq    %rsp, %rbp
+        movl    $2, %edi
+        call    sleep
+        popq    %rbp
+        ret
+#+END_SRC
+
+A wrapper around =sleep=, presumably the only provided by =unistd.h=, calling it
+with an argument of two seconds.
+
+* Challenge #52
+
+Another simple disassembly:
+
+#+BEGIN_SRC asm
+$SG3103	DB	'%d', 0aH, 00H
+
+_main	PROC
+    push	0
+    call	DWORD PTR __imp___time64
+    push	edx
+    push	eax
+    push	OFFSET $SG3103 ; '%d'
+    call	DWORD PTR __imp__printf
+    add	esp, 16
+    xor	eax, eax
+    ret	0
+_main	ENDP
+#+END_SRC
+
+To copy straight from [[https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/time-time32-time64?view=vs-2019][MSDN]], this prints the number of "seconds elapsed since
+midnight (00:00:00), January 1, 1970, Coordinated Universal Time (UTC)."
+
+MSDN also answers the follow-up question: "=time= is a wrapper for =_time64= and
+=time_t= is, by default, equivalent to =__time64_t=. If you need to force the
+compiler to interpret =time_t= as the old 32-bit =time_t=, you can define
+=_USE_32BIT_TIME_T=. This is not recommended because your application may fail
+after January 18, 2038; the use of this macro is not allowed on 64-bit
+platforms."
+
+* Challenge #53
+
+I thought this was an interesting challenge. "This code, compiled in Linux
+x86-64 using GCC is crashing while execution (segmentation fault). It's also
+crashed if compiled by MinGW for win32. However, it works in Windows environment
+if compiled by MSVC 2010 x86. Why?"
+
+#+BEGIN_SRC c
+#include <string.h>
+#include <stdio.h>
+
+void alter_string(char *s)
+{
+        strcpy (s, "Goodbye!");
+        printf ("Result: %s\n", s);
+};
+
+int main()
+{
+        alter_string ("Hello, world!\n");
+};
+#+END_SRC
+
+The code is modifying a string constant, which GCC tends to put in a read-only
+memory segment (=.rodata=) in the resultant executable. Writing to a read-only
+memory segment will cause a segmentation fault. I haven't tested it, but the
+question statement makes me think that MSVC puts string constants in a writable
+segment, so this would work just fine.
+
+* Challenge #54
+
+No disassembly is given for this challenge. The only thing on the page is "[w]hy
+isn't the x86 LOOP instruction used by modern compilers anymore?" Some searching
+yields [[https://stackoverflow.com/questions/35742570/why-is-the-loop-instruction-slow-couldnt-intel-have-implemented-it-efficiently/35743699#35743699][this Stack Overflow answer]]. Basically, =loop= is from the time before x86
+became horribly complex, and so on modern processors, it's slow.
+
+* Challenge #56
+
+I decided to skip challenge #55, as it would really just be a walkthrough of
+which r2 commands I used. Challenge #56 is not particularly difficult. I went
+along with the disassembly from MSVC.
+
+#+BEGIN_SRC c
+#include <stdio.h>
+
+int main(void)
+{
+        int n;
+        n = 100;
+        do {
+                printf("%d", n);
+        } while (n-- != 0);
+        return 0;
+}
+#+END_SRC
+
+The code prints the integers from 100 to 0.
+
+* Challenge #57
+
+This is almost the same disassembly as last time.
+
+#+BEGIN_SRC c
+#include <stdio.h>
+
+int main(void)
+{
+        int n;
+        n = 1;
+        do {
+                printf("%d", n);
+                n += 3;
+        } while (n < 100);
+        return 0;
+}
+#+END_SRC
+
+* Challenge #58
+
+This time, we're fortunate enough to be given a disassembly from GCC 4.8.1,
+albeit with =-O3=.
+
+#+BEGIN_SRC c
+int f(char *a)
+{
+        int count;
+        count = 0;
+        while (*a != '\0') {
+                if (*a++ == ' ') {
+                        count++;
+                }
+        }
+        return count;
+}
+#+END_SRC
+
+=f= counts the number of spaces in a given string. As an aside, when I was first
+learning to read assembly, I recall someone describing =-O3= as "unintelligible to
+humans." The more reverse engineering I've done, the more I've realized that the
+optimizations at that level tend to not be as absurd as people make them out to
+be. I considered this to be an easy challenge.
+
+* Challenge #59
+
+This one was /really/ easy.
+
+#+BEGIN_SRC asm
+_a$ = 8
+_f	PROC
+    mov	ecx, DWORD PTR _a$[esp-4]
+    lea	eax, DWORD PTR [ecx*8]
+    sub	eax, ecx
+    ret	0
+_f	ENDP
+#+END_SRC
+
+The function just returns =a * 7=. I suspect the multiplication followed by
+subtraction was an optimization, since multiplication by a power of two can be
+implemented as a left shift.
+
+* Challenge #61
+
+Perhaps the most difficult part of this challenge was going out my way to [[https://float.exposed/0x4014000000000000][ensure
+that the constant really was 5.0]].
+
+#+BEGIN_SRC c
+double f(double a, double b, double c, double d, double e)
+{
+        return (a + b + c + d + e) / 5;
+}
+#+END_SRC
+
+=f= simply averages five numbers.
+
+* Challenge #62
+
+The challenge notes that the compiler was optimizing for space, which may
+explain the pointless nested loop.
+
+#+BEGIN_SRC c
+void f(float *a, float *b, float *c)
+{
+        int i;
+        int j;
+
+        long coffee;
+        long cake;
+
+        coffee = a - b;
+        cake = c - b;
+
+        for (i = 200; i > 0; i--) {
+                for (j = 100; j > 0; j--) {
+                        b[cake] = b[0] + b[coffee];
+                        b += 8;
+                }
+        }
+}
+#+END_SRC
+
+=f= adds 20000 elements from =a= and =b=, storing their sums in =c=.
+
+* Challenge #64
+
+I was swamped with preparing for finals this weekend, so I decided to skip
+challenge #63 in favor of something less arduous. The question for this one is,
+"[a]n array of array[x][y] form is accessed here. Try to determine the
+dimensions of the array, at least partially, by finding y."
+
+#+BEGIN_SRC c
+double f(double *array, int x, int y)
+{
+		return array[y + x * 15];
+}
+#+END_SRC
+
+The array has some number of rows each containing 15 elements.
+
+* Challenge #65
+
+The question here is the same as the previous challenge.
+
+#+BEGIN_SRC c
+int f(int *array, int x, int y, int z)
+{
+		return array[z + 5 * 16 * (y + 4 * 15 * x)];
+}
+#+END_SRC
+
+Assuming an array of integers, the dimensions of the array are 15 x 20 x ...
+
+* Challenge #74
+
+I skipped way ahead this time because I was done with finals and knew that this
+was the last of the challenges I'd be doing this year. So I looked through what
+remained in search of something difficult, but interesting, and settled on this
+one.
+
+We're given a binary,
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ sha256sum challenge74
+6d2ac11d1e6200d6a2cca988189764b6acdb7811d24619e8e66f1796c8c27394  challenge74
+jakob@Epsilon ~ $ file challenge74
+challenge74: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 2.6.24, BuildID[sha1]=7fa3bd4aa738bced5aaccb161090818646e07704, stripped
+#+END_SRC
+
+as well as a few valid keys.
+
+#+BEGIN_SRC prog
+2Z7A7-EK270-TMHR4-BHC71-CEB52-HELL0-HELL0-EONP9
+2Z7A7-6I7R9-MZGO9-FDQJ3-JN0Q6-HELL0-HELL0-72KJ9
+#+END_SRC
+
+I took this as an opportunity to try out the [[https://github.com/radareorg/r2ghidra-dec][r2ghidra-dec]] plugin for Radare.
+Let's see how it does.
+
+#+BEGIN_SRC c
+// WARNING: Could not reconcile some variable overlaps
+// WARNING: [r2ghidra] Detected overlap for variable var_20h// WARNING: [r2ghidra] Failed to match type signed int64_t for variable var_10h to Decompiler type: Unknown type
+// identifier signed
+// WARNING: [r2ghidra] Detected overlap for variable var_ch
+// WARNING: [r2ghidra] Failed to match type signed int64_t for variable var_8h to Decompiler type: Unknown type
+// identifier signed
+// WARNING: [r2ghidra] Detected overlap for variable var_8h
+// WARNING: [r2ghidra] Failed to match type signed int for variable var_4h to Decompiler type: Unknown type identifier
+// signed
+// WARNING: [r2ghidra] Detected overlap for variable var_4h
+// WARNING: [r2ghidra] Detected overlap for variable var_bh
+
+undefined8 main(uint32_t argc, char **argv)
+{
+    int64_t iVar1;
+    char cVar2;
+    int32_t iVar3;
+    int64_t in_FS_OFFSET;
+    int64_t var_30h;
+    int64_t var_24h;
+    int64_t var_8h;
+    
+    iVar1 = *(int64_t *)(in_FS_OFFSET + 0x28);
+    var_24h._0_4_ = argc;
+    sym.imp.puts("Crackme/keygenme by Dennis Yurichev, http://challenges.re/74");
+    sym.imp.putchar(10);
+    if ((uint32_t)var_24h == 1) {
+        sym.imp.puts("Command line: <serial number>");
+    // WARNING: Subroutine does not return
+        sym.imp.exit(0);
+    }
+    iVar3 = sym.imp.memcmp(argv[1] + 0x1e, "HELL0-HELL0", 0xb);
+    if (iVar3 != 0) {
+        sym.imp.puts("SN format is incorrect");
+    // WARNING: Subroutine does not return
+        sym.imp.exit(0);
+    }
+    iVar3 = fcn.00400bb5((int64_t)argv[1], (int64_t)&var_24h + 4);
+    if (iVar3 == -1) {
+        sym.imp.puts("SN format is incorrect");
+    // WARNING: Subroutine does not return
+        sym.imp.exit(0);
+    }
+    cVar2 = fcn.0040085e((void *)((int64_t)&var_24h + 4));
+    if (cVar2 == '\0') {
+        sym.imp.puts("SN is not valid");
+    } else {
+        sym.imp.puts("SN valid");
+    }
+    if (iVar1 != *(int64_t *)(in_FS_OFFSET + 0x28)) {
+    // WARNING: Subroutine does not return
+        sym.imp.__stack_chk_fail();
+    }
+    return 0;
+}
+#+END_SRC
+
+When I saw this, I was blown away. Damn. The NSA did a great job with this.
+Here's my cleaned up version.
+
+#+BEGIN_SRC c
+#include <stdint.h>
+
+int main(int argc, char **argv)
+{
+	char buf[24];
+    
+    printf("Crackme/keygenme by Dennis Yurichev, http://challenges.re/74\n\n");
+
+    if (argc == 1) {
+        puts("Command line: <serial number>");
+        exit(0);
+    }
+
+    if (memcmp(argv[1] + 0x1e, "HELL0-HELL0", 0xb)) {
+        puts("SN format is incorrect");
+        exit(0);
+    }
+
+    if (fcn_00400bb5(argv[1], buf) == -1) {
+        puts("SN format is incorrect");
+        exit(0);
+    }
+
+    if (fcn_0040085e(buf) == '\0') {
+        puts("SN is not valid");
+    } else {
+        puts("SN valid");
+    }
+
+    return 0;
+}
+#+END_SRC
+
+Aside from getting rid of temporary variables, I removed =iVar1= as it's no more
+than a stack canary, and I fixed up a few "errors" that the decompiler made. As
+an example, notice that strange assignment to =var_24h._0_4_=? Let's see what the
+disassembly says.
+
+#+BEGIN_SRC asm
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $0x30, %rsp
+    movl %edi, var_24h ; argc
+    movq %rsi, var_30h ; argv
+#+END_SRC
+
+This is the only write to =var_24h=, so the line should have been =var_24h = argv=.
+For some reason, the decompiler saw this as assignment to a =struct= field. I
+ended up removing it anyway. Using 'argc' is clearer.
+
+There's also that odd =(void *)((int64_t)&var_24h + 4)=, but if we look at the
+disassembly,
+
+#+BEGIN_SRC asm
+    leaq var_20h, %rdx
+    movq %rdx, %rsi
+    movq %rax, %rdi
+    callq fcn.00400bb5
+    ...
+    leaq var_20h, %rax
+    movq %rax, %rdi
+    callq fcn.0040085e
+#+END_SRC
+
+So that should've just been =var_20h= in the decompilation. Regardless, I'm
+impressed. And I have to say, as a plugin, r2ghidra is really good. =pdg= takes a
+few seconds, but if you rename some variables with =afvn= and run it again, it
+spits out the updated version instantly, which makes me think that it's probably
+doing some sort of caching and quick substitution.
+
+Anyway, back to the challenge. We can tell from the decompilation already that
+the sixth and seventh components must be "HELL0-HELL0". It also has to contain
+eight components, delimited by '-', as we can see from =fcn_00400bb5=:
+
+#+BEGIN_SRC c
+var_10h._0_4_ = 0;
+while ((int32_t)var_10h < 7) {
+    if (*(char *)(arg1 + (int64_t)((int32_t)var_10h * 6) + 5) != '-') {
+        return 0xffffffff;
+    }
+    var_10h._0_4_ = (int32_t)var_10h + 1;
+}
+#+END_SRC
+
+Here's the gist of the key verification algorithm:
+
+- =fcn_00400bb5= parses the key into a buffer (I renamed this to =parse_key=)
+  - Calls out to a =charcode= function which maps numerals to their numeric values
+    ('0' becomes 0) and letters 'A' through 'Z' to 10-35.
+  - The buffer is written with 3 bytes per component. I thought this was a
+    decompiler mistake at first, but I checked the disassembly and it really is
+    3 bytes per component. 24 bytes total.
+- =fcn_0040085e= does further verification and enables features based on the
+  parsed key (I renamed this to =enable_features=).
+  - The resultant parsed buffer needs to start with 0xdeadbabe.
+  - The 4th and 5th bytes give a numerical year, the 6th a numerical month, and
+    the 7th a numerical day.
+    - There's a sanity checks to ensure that the day is between 1 and 31, that
+      the month is between 1 and 12, and that the year is between 2016 and 2101.
+  - The 7th bit of byte 8 enables feature A
+  - The 1st bit of byte 9 enables feature B
+  - The 2nd bit of byte 10 enables feature C
+  - The 4th bit of byte 11 enables feature D
+  - The 1st bit of byte 12 enables feature E
+  - There's one final check of the last 8 bytes against a =checksum= function.
+
+#+BEGIN_SRC c
+#include <stdint.h>
+
+uint64_t checksum(int64_t init, char *parsed, int64_t length)
+{
+		uint64_t ret;
+		char *cur;
+		int i;
+		int j;
+
+		cur = parsed;
+		ret = ~init;
+		i = length;
+	
+		while (i != 0) {
+				ret = ret ^ (uint64_t) *cur;
+				j = 0;
+				while (i--, cur++, j < 8) {
+						if ((ret & 1) == 0) {
+								ret = ret >> 1;
+						} else {
+								ret = ret >> 1 ^ 0x42f0e1eb0badbad0;
+						}
+						j++;
+				}
+		}
+	
+		return ~ret;
+}
+#+END_SRC
+
+I actually didn't realize that last part until I'd already hacked together a
+quick key verifier.
+
+#+BEGIN_SRC common-lisp
+(use-package :cl-utilities)
+
+(defun charcode (c)
+  (let ((value (char-code c)))
+    (cond ((<= (char-code #\0) value (char-code #\9)) (- value #x30))
+          ((<= (char-code #\A) value (char-code #\Z)) (- value #x37)))))
+
+(defun hash-component (component)
+  (let* ((characters (coerce component 'list))
+         (values (mapcar #'charcode characters)))
+    (unless (or (/= 5 (length values)) (find nil values))
+      (+ (* #x000001 (nth 0 values))
+         (* #x000024 (nth 1 values))
+         (* #x000510 (nth 2 values))
+         (* #x00b640 (nth 3 values))
+         (* #x19a100 (nth 4 values))))))
+
+(defun parse-key (key)
+  (reduce #'append
+          (mapcar #'(lambda (component)
+                      (let ((hash (hash-component component)))
+                        (list (logand hash #xff)
+                              (logand (ash hash -8) #xff)
+                              (logand (ash hash -16) #xff))))
+                  (split-sequence #\- key))))
+
+(defun key-valid-p (key)
+  ;; Must begin with 0xdeadbabe, and have HELL0 for components 6 and 7.
+  (and (equal (subseq key 0 4) '(222 173 186 190))
+       (equal (subseq key 15 21) '(153 95 15 153 95 15))))
+
+(defun key-attributes (key)
+  (let ((parsed (parse-key key)))
+    (list :valid (key-valid-p parsed)
+          :expiry-year (logior (ash (nth 4 parsed) 8)
+                               (nth 5 parsed))
+          :expiry-month (nth 6 parsed)
+          :expiry-day (nth 7 parsed)
+          :feature-a (plusp (logand (nth 8 parsed) (ash 1 6)))
+          :feature-b (plusp (logand (nth 9 parsed) (ash 1 0)))
+          :feature-c (plusp (logand (nth 10 parsed) (ash 1 1)))
+          :feature-d (plusp (logand (nth 11 parsed) (ash 1 2)))
+          :feature-e (plusp (logand (nth 12 parsed) (ash 1 0))))))
+
+(key-attributes "2Z7A7-EK270-TMHR4-BHC71-CEB52-HELL0-HELL0-EONP9")
+;; (:VALID T :EXPIRY-YEAR 2053 :EXPIRY-MONTH 5 :EXPIRY-DAY 22 :FEATURE-A T
+;;  :FEATURE-B T :FEATURE-C T :FEATURE-D T :FEATURE-E NIL)
+
+(key-attributes "2Z7A7-6I7R9-MZGO9-FDQJ3-JN0Q6-HELL0-HELL0-72KJ9")
+;; (:VALID T :EXPIRY-YEAR 2042 :EXPIRY-MONTH 2 :EXPIRY-DAY 21 :FEATURE-A T
+;;  :FEATURE-B T :FEATURE-C T :FEATURE-D T :FEATURE-E T)
+#+END_SRC
+
+We can verify our results.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ ./challenge74 "2Z7A7-EK270-TMHR4-BHC71-CEB52-HELL0-HELL0-EONP9"
+Crackme/keygenme by Dennis Yurichev, http://challenges.re/74
+
+Expiration date: 2053-05-22
+Feature A: ON
+Feature B: ON
+Feature C: ON
+Feature D: ON
+Feature E: OFF
+SN valid
+jakob@Epsilon ~ $ ./challenge74 "2Z7A7-6I7R9-MZGO9-FDQJ3-JN0Q6-HELL0-HELL0-72KJ9"
+Crackme/keygenme by Dennis Yurichev, http://challenges.re/74
+
+Expiration date: 2042-02-21
+Feature A: ON
+Feature B: ON
+Feature C: ON
+Feature D: ON
+Feature E: ON
+SN valid
+#+END_SRC
+
+But, as I mentioned, I'd missed the checksum, so we'll need to deal with that in
+developing a keygen. What makes this so difficult is that the bytes of the
+checksum are incorporated in the checksum value. So, I thought this might be an
+opportunity to add something else to my toolbox: the [[https://en.wikipedia.org/wiki/Z3_Theorem_Prover][Z3 Theorem Prover]].
+
+I'd never used it before, but it seems to show up in CTF writeups quite
+frequently. I did a bit of reading ([[https://jomo.tv/security/mrmcd-ctf-writeup-flag-checker][this]], [[https://ericpony.github.io/z3py-tutorial/guide-examples.htm][this]] and [[https://stackoverflow.com/questions/53726998/using-z3-where-constraint-depends-on-output-of-function][this]]) and put together this:
+
+#+BEGIN_SRC python
+from z3 import *
+
+s = Solver()
+
+def checksum(init, key):
+    result = BitVecVal(~init, 64)
+
+    for byte in key:
+        result ^= ZeroExt(56, byte)
+        for i in range(8):
+            result = (result >> 1 & 0x7fffffffffffffff) ^ (0x42f0e1eb0badbad0 * (result & 1))
+
+    result = ~result
+
+    return result
+
+def unpack(word):
+    result = BitVecVal(0, 64)
+    result |= ZeroExt(56, word[0])
+    result |= ZeroExt(56, word[1]) << 8
+    result |= ZeroExt(56, word[2]) << 16
+    result |= ZeroExt(56, word[3]) << 24
+    result |= ZeroExt(56, word[4]) << 32
+    result |= ZeroExt(56, word[5]) << 40
+    result |= ZeroExt(56, word[6]) << 48
+    result |= ZeroExt(56, word[7]) << 56
+    return result
+
+key = [BitVec("bv{}".format(i), 8) for i in range(24)]
+
+FEATURE_A = False
+FEATURE_B = False
+FEATURE_C = False
+FEATURE_D = False
+FEATURE_E = False
+
+s.add(key[0] == 222)
+s.add(key[1] == 173)
+s.add(key[2] == 186)
+s.add(key[3] == 190)
+s.add(key[4] == ((2019 & 0xff00) >> 8))
+s.add(key[5] == 2019 & 0x00ff)
+s.add(key[6] == 12)
+s.add(key[7] == 25)
+s.add(key[8] & 0b100000 == (1 if FEATURE_A else 0))
+s.add(key[9] & 0b000001 == (1 if FEATURE_B else 0))
+s.add(key[10] & 0b000010 == (1 if FEATURE_C else 0))
+s.add(key[11] & 0b001000 == (1 if FEATURE_D else 0))
+s.add(key[12] & 0b000001 == (1 if FEATURE_E else 0))
+s.add(key[15] == 153)
+s.add(key[16] == 95)
+s.add(key[17] == 15)
+s.add(key[18] == 153)
+s.add(key[19] == 95)
+s.add(key[20] == 15)
+
+s.add(unpack(key[16:]) == checksum(0, key))
+
+s.check()
+print(s.model())
+#+END_SRC
+
+Accurately translating the checksum function was a pain in the tuckus. The right
+shift was giving me a hard time since the Z3 right shift doesn't prepend with
+zeroes. The =& 0x7fffffffffffffff= is my attempt at dealing with that.
+
+As an aside, I just want to say that GDB's =call= functionality is godsend. It
+made verifying my translation so much easier.
+
+#+BEGIN_SRC prog
+(gdb) p (unsigned long long) $checksum(0, &{'\xff', '\xff', '\xff'}, 3)
+$14 = 18446742974197923840
+#+END_SRC
+
+So, I let this run overnight, which brought me back to when I was more active
+with CTF and would let my half-complete solutions run while I slept.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ python solver.py 
+[bv22 = 196,
+ bv13 = 18,
+ bv21 = 216,
+ bv23 = 130,
+ bv14 = 209,
+ bv8 = 130,
+ bv10 = 108,
+ bv9 = 170,
+ bv11 = 208,
+ bv12 = 240,
+ bv20 = 15,
+ bv19 = 95,
+ bv18 = 153,
+ bv17 = 15,
+ bv16 = 95,
+ bv15 = 153,
+ bv7 = 24,
+ bv6 = 12,
+ bv5 = 227,
+ bv4 = 0,
+ bv3 = 190,
+ bv2 = 186,
+ bv1 = 173,
+ bv0 = 222]
+#+END_SRC
+
+This was waiting for me when I got back from the gym the next morning.
+
+#+BEGIN_SRC common-lisp
+(string-join
+ (mapcar #'ahash-component-inverse
+         (mapcar #'triplet-to-number '((222 173 186)
+                                       (190 0 27)
+                                       (12 24 13)
+                                       (170 108 208)
+                                       (240 18 20)
+                                       (153 95 15)
+                                       (153 95 15)
+                                       (216 196 130))))
+ "-")
+#+END_SRC
+
+#+BEGIN_SRC prog
+CL-USER> (string-join
+ (mapcar #'ahash-component-inverse
+         (mapcar #'triplet-to-number '((222 173 186)
+                                       (190 0 27)
+                                       (12 24 13)
+                                       (170 108 208)
+                                       (240 18 20)
+                                       (153 95 15)
+                                       (153 95 15)
+                                       (216 196 130))))
+ "-")
+"2Z7A7-AHX11-S4EI0-6LR48-K37S0-HELL0-HELL0-KPO35"
+CL-USER> (key-attributes "2Z7A7-AHX11-S4EI0-6LR48-K37S0-HELL0-HELL0-KPO35")
+(:VALID NIL :EXPIRY-YEAR 27 :EXPIRY-MONTH 12 :EXPIRY-DAY 24 :FEATURE-A NIL
+ :FEATURE-B NIL :FEATURE-C NIL :FEATURE-D NIL :FEATURE-E NIL)
+#+END_SRC
+
+Oh no...
+
+#+BEGIN_SRC python
+...
+s.add(key[4] == 2019 & 0xff00)
+...
+#+END_SRC
+
+That should've been =s.add(key[4] == ((2019 & 0xff00) >> 8))=...
+
+;-;
+
+Let's try this again.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ python solver.py 
+[bv22 = 80,
+ bv13 = 39,
+ bv21 = 204,
+ bv23 = 133,
+ bv14 = 124,
+ bv8 = 140,
+ bv10 = 12,
+ bv9 = 168,
+ bv11 = 183,
+ bv12 = 184,
+ bv20 = 15,
+ bv19 = 95,
+ bv18 = 153,
+ bv17 = 15,
+ bv16 = 95,
+ bv15 = 153,
+ bv7 = 25,
+ bv6 = 12,
+ bv5 = 227,
+ bv4 = 7,
+ bv3 = 190,
+ bv2 = 186,
+ bv1 = 173,
+ bv0 = 222]
+#+END_SRC
+
+This time it actually ran for a whole two days.
+
+#+BEGIN_SRC prog
+CL-USER> (mapcar #'hash-component-inverse
+        (mapcar #'triplet-to-number
+                '((222 173 186)
+                  (190 7 227)
+                  (12 25 140)
+                  (168 12 183)
+                  (184 39 124)
+                  (153 95 15)
+                  (153 95 15)
+                  (204 80 133))))
+("2Z7A7" "YFWU8" "CGSG5" "CF457" "K9EU4" "HELL0" "HELL0" "OH975")
+CL-USER> (key-attributes "2Z7A7-YFWU8-CGSG5-CF457-K9EU4-HELL0-HELL0-OH975")
+(:VALID T :EXPIRY-YEAR 2019 :EXPIRY-MONTH 12 :EXPIRY-DAY 25 :FEATURE-A NIL
+ :FEATURE-B NIL :FEATURE-C NIL :FEATURE-D NIL :FEATURE-E NIL)
+#+END_SRC
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ ./challenge74 "2Z7A7-YFWU8-CGSG5-CF457-K9EU4-HELL0-HELL0-OH975"
+Crackme/keygenme by Dennis Yurichev, http://challenges.re/74
+
+Expiration date: 2019-12-25
+Feature A: OFF
+Feature B: OFF
+Feature C: OFF
+Feature D: OFF
+Feature E: OFF
+SN valid
+#+END_SRC
+
+There we go. A working keygen! (Provided you're willing to wait).
+
+* An End-of-Year Reflection
+
+This was fun, but I think in planning this out, I should have preferred depth
+over breadth, like getting through some of the challenges on [[http://reversing.kr/index.php][reversing.kr]]. The
+challenges I got the most out of were the ones I had to spend more than a day
+reversing. Another thing that made regret the choice of Dennis Yurichev's
+challenges is the significance of context in reverse engineering. Most of these
+challenges give little more than a disassembly. There are exceptions --
+challenge #33, for example, was one I was able to solve because the description
+said that it was a cryptographic function. But for the most part, I think being
+able to see the "big picture" would have been a more realistic way to practice
+my reverse engineering chops.
+
+One idea I've been toying with is putting out a crackme on a monthly basis.
+Infrequent enough that it wouldn't be overwhelming, and I'd be able to make it a
+sizeable challenge. I'd be able to give out hints every week, and post the
+solution at the end of the month. Actually, I may do this through the [[https://ctf.cs.umass.edu/][wargames]]
+site we're putting together at university. Stay tuned!

@@ -1,0 +1,124 @@
+#+TITLE: Installing Gentoo: One Month Later
+#+DATE: <2018-05-28 Mon 20:10>
+#+TAGS: opinion, linux, gentoo
+
+It seems that the general consensus on "distro hopping," the act of constantly
+switching between distributions of GNU/Linux, is that it's a bad habit that
+should be consciously avoided. If you do a search for the term, you'll get
+articles with titles along the lines of "How I Stopped Distro Hopping." But it's
+also a term that gets thrown around loosely, and I think that that "distro
+hopping" is an acceptable practice in a lot of the contexts where the phrase is
+used. Needless to say, I've "hopped" distributions in the past month, and this
+blog post is going to describe the highs and lows of that experience.
+
+My experiences with GNU/Linux began when I installed openSUSE about four years
+ago. I chose it over something more conventional like Ubuntu for its integration
+with KDE Plasma 4 (I'm aware that I suffered from bad taste at the time). I
+stuck with that until I decided to try Fedora for no particular reason, which
+was short-lived. I later switched to Arch Linux to fit in with the cool kids,
+and that became my daily driver for a little over two years. Recently, however,
+I've switched to Gentoo, because I've wanted to try GNU/Linux without systemd
+and friends. Many conversations with people over IRC convinced me that the
+maintenance model of those packages is [[https://github.com/systemd/systemd/issues/6237][concerning, to say the least]], and that
+it's preferable if the operations-critical parts of my operating system aren't
+ridden with CVE's. Gutting Arch of the beasts within is possible, but seriously
+complicates everything, so I decided that the best course of action was to just
+throw the baby out with the bathwater and use this as an opportunity to
+experiment with something I'd been meaning to try.
+
+Gentoo has been on my radar ever since I installed Arch, as I had several
+friends who loved to talk about the merits of a source-based distribution. My
+original plan was to wait until I had a machine I could comfortably experiment
+with, separate from my workstation or laptop, but since I was hopping distros
+anyway, I decided to just go ahead and get my hands dirty. Of course, I didn't
+go into the whole migration process without concerns. For one, I want to cleanse
+/all/ of machines of systemd. That includes the Raspberry Pi I use as a home
+server, and I don't think it's powerful enough to be compiling everything from
+source. I opted to install Alpine on that instead. The other problem was that my
+laptop's only storage device was an SSD, which I didn't want to subject to
+excessive writes. Fortunately the solution to that was straightforward: I was
+able to mount =/var/tmp/portage'=as tmpfs so that all the object files generated
+while compiling got dumped to an in-memory filesystem instead of the disk.
+
+After making sure that everything I needed to do was possible on the new setup,
+I went ahead and installed it on both my workstation and laptop. The canonical
+reference for installing Gentoo, dubbed "the handbook," is incredibly
+well-written, so the installation process was painless. I think the quality of
+documentation is a big benefit that Gentoo has over Arch; everyone praises the
+Arch wiki, but I find that the Gentoo documentation is far more informative and
+much more consistent. Setting it up past the initial installation really wasn't
+difficult either - I had X11 running the same night.
+
+I also used this as an opportunity to try out some new software. On Arch, I was
+using i3 and rxvt-unicode, but now I'm on dwm and st and I'm really enjoying
+both of them. These programs are configured at compile-time, which would've made
+using them on Arch a bit unwieldy, but Gentoo's package manager makes the whole
+process trivial. I just throw any patches I want in =/etc/portage/patches=, edit
+the =config.h= files in =/etc/portage/savedconfig=, and emerge the package.
+
+Gentoo's package manager is by far the best I've used in my four years of
+running GNU/Linux. Being able to interface with it through a couple of files in
+=/etc= is a great interface. It also brings USE flags, which is probably the
+poster child of Gentoo's features. If you're not familiar with USE flags, they
+allow you to enable or disable certain features at compile-time. As an example,
+say I want to play some Goldeneye on my Nintendo 64 and use my computer as a
+monitor. I have a cheap USB capture card with a kernel driver exposing the
+Video4Linux API. I'll need some sort of video player to put the stream on my
+monitor, but that video player is going to need to come with support for said
+Video4Linux API. I'm what you might call a special case - most GNU/Linux users
+don't have capture cards, so that feature isn't important to them. If it isn't
+important to them, why should they have to waste disk space housing all the code
+and dependencies for it? This is where conditional-compilation comes in. During
+the process of turning source code into executable binaries, certain features
+can be turned on or off. In a binary distribution like Arch Linux, the package
+maintainers need to make an executive decision about which features should be
+enabled, because they're making a binary for /everyone/. And, last I checked,
+they decided that V4L support wasn't important enough for them to enable it.
+Bummer. If you want that feature, you'll need to compile it yourself. And if a
+package has features you don't care about, bummer. You have to either deal with
+all the dependencies that those features bring in, or compile it yourself.
+
+USE flags makes this a lot easier by integrating conditional compilation options
+into the package manager, rather than forcing you to wrangle with the configure
+script of whatever build system the software uses. For example, I can compile
+mpv with support for V4L simply by enabling the 'v4l' USE flag. The nice thing
+about this is that all packages supporting V4L recognize this same USE flag, and
+I can enable it globally - compiling V4L support into everything on my system
+without putting much thought into it. And if I just want it for mpv instead of
+everything on my system, I'm also able to enable it for just certain packages.
+
+This freedom does come with the downsides of, well, having to compile everything
+from source. Compiling software takes time and processing power, and trying to
+optimize the process has caused me some headaches. In Gentoo, you'll want to
+pick a decent value for =--jobs= in =make.conf= so that compilation is fast.
+=--jobs=, or =-j= is a signal to the build system that it can run some number of
+tasks in parallel. I started out with =-j8= on my laptop, since it has 8 cores.
+This worked great for smaller packages, but when I tried to emerge Firefox, my
+machine gave up half-way through. It was still running. I could ~Ctrl+Z~ from
+=emerge= and use it, but the compilation process had hanged and my only option
+was to restart it, to which it would hang at another point in the compilation
+process. I tried it again with =-j4= and it was able to compile without any
+trouble, it just took much longer. I had a similar issue on my workstation - it
+has a quad-core processor so I was using =-j4=, but I was regularly getting
+segmentation faults while emerging large packages such as LLVM (apparently a
+hardware issue that I need to look into), so I lowered it to =-j2=. Of course,
+looking back on it now, [[https://blogs.gentoo.org/ago/2013/01/14/makeopts-jcore-1-is-not-the-best-optimization/][the number of cores your machine has isn't a good value
+for '-j' anyway.]]
+
+Another great thing about Portage is the API for making your own packages. It's
+shell scripts, so it's similar to how you'd go about making a package on Arch,
+but I find the API feels like a massive hack. For one, [[https://devmanual.gentoo.org/][the documentation]], again,
+towers over that of Arch, but it also brings something reminiscent of a standard
+library: eclasses, which enable you to abstract the commonality between packages
+using the same build system. Also, instead of having just one big AUR,
+unofficially maintained packages are distributed in user-managed "overlays." I'd
+think that pacman can probably do something similar, but you almost never see it
+in practice.
+
+All in all, I'm very happy with the level of customization and freedom that
+Gentoo offers me, and I haven't missed systemd one bit. OpenRC, ALSA, and
+wpa_supplicant are all I need. Going forward, I'm hoping to become more involved
+in the Gentoo community - becoming active on the forums and IRC, and hosting an
+overlay for the handful of ebuilds I've made. The Gentoo community seems much
+more tightly-knit than the Arch community, and I'm looking forward to meeting
+some new friends.

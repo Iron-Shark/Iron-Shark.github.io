@@ -1,0 +1,925 @@
+#+TITLE: Writeups for Dennis Yurichev's Reverse Engineering Challenges (#12-#22)
+#+TAGS: writeup, reverse-engineering, x86
+#+DATE: <2019-05-28 Tue 15:18>
+#+HAUNT_BASE_DIR: /home/jakob/Blog/haunt/
+
+This is the second set of solutions for my self-imposed challenge of completing
+at least fifty of the exercises on Dennis Yurichev's [[https://challenges.re][challenges.re]] by the end of
+the year. The first set is available [[http:///jakob.space/challenges-re-writeups-1.html][here]].
+
+* Challenge #12
+
+No hints are given for this challenge, but it is the first time a binary is
+available in addition to the disassembly. I didn't download the executable, I
+was able to gather from the tags that the target is amd64 Linux.
+
+If later challenges also provide executables, I may use it as an opportunity to
+explore the NSA's newly-released [[https://www.nsa.gov/resources/everyone/ghidra/][Ghidra]]. At the time of writing this, Ghidra's
+source code has yet to be released, so I'll have to pass up the opportunity this
+time around.
+
+#+BEGIN_SRC c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+#include <utime.h>
+
+int main(int argc, char **argv)
+{
+        // push rbx
+        // mov rbx, rsi
+        // sub rsp, 160
+        int ret;
+        struct stat sbuf;
+        struct utimbuf tbuf;
+
+        // cmp edi, 2
+        // je .L2
+        if (argc != 2) {
+                // mov edi, OFFSET FLAT:.LC0
+                // call puts
+                puts("Usage: ");
+        }
+
+        // .L2:
+        // mov rsi, QWORD PTR [rbx+8]
+        // lea rdx, [rsp+16]
+        // mov edi, 1
+        // call __xstat
+        ret = stat(argv[1], &sbuf);
+
+        // test eax, eax
+        // js .L10
+        if (ret < 0) {
+                // .L10:
+                // mov edi, OFFSET FLAT:.LC1
+                // call puts
+                // xor edi, edi
+                // call exit
+                puts("error #1!");
+                exit(0);
+        }
+
+        // mov rax, QWORD PTR [rsp+88]
+        // xor edi, edi
+        // mov QWORD PTR [rsp], rax
+        tbuf.actime = sbuf.st_atim.tv_sec;
+
+        // call time
+        /// ...
+        // mov QWORD PTR [rsp+8], rax
+        tbuf.modtime = time(NULL);
+
+        // mov rdi, QWORD PTR [rbx+8]
+        // mov rsi, rsp
+        // call utime
+        ret = utime(argv[1], &tbuf);
+
+        // test eax, eax
+        // js .L11
+        if (ret < 0) {
+                // .L11:
+                // mov edi, OFFSET FLAT:.LC2
+                // call puts
+                // xor edi, edi
+                // call exit
+                puts("error #2!");
+                exit(0);
+        }
+
+        // add rsp, 160
+        // xor eax, eax
+        // pop rbx
+        // ret
+        return 0;
+}
+#+END_SRC
+
+The first thing that may stand out in the disassembly listing is =call __xstat=.
+=__xstat= isn't part of the C standard library or POSIX. My understanding of
+functions like these is that sometimes an interface like =stat= will result in a
+call to some internal libc routine when compiled, but the only time I've seen
+this before was with =__printf_chk=. Regardless, search engines are your friend,
+and you should have no trouble arriving at the [[http://refspecs.linuxbase.org/LSB_3.0.0/LSB-PDA/LSB-PDA/baselib-xstat-1.html][relevant page]] in the Linux
+Standard Base Specification. One interesting thing of note is the comment that
+"=ver= shall be =3= or the behavior of these functions is undefined," yet the
+disassembly indicates that =ver= is =1=. I'm doubtful that this is part of the
+challenge, though.
+
+I also just guessed that =QWORD PTR [rsp+88]= was =sbuf.st_atim.tv_sec=, given the
+context that the value is used in. Going from assembly to the corresponding
+fields of a struct is a pain without a tool, which is perhaps an indication that
+I should've downloaded the binary and used Ghidra^h^h^h^h^h^hradare2 to prod at
+it.
+
+Either way, the code updates a file's modification time. It's comparable to
+=touch=, but doesn't create the file if it doesn't exist. The strings are
+intentionally vague, so here's a cleaned up version:
+
+#+BEGIN_SRC c
+#include <errno.h>
+#include <string.h>
+
+int main(int argc, char **argv)
+{
+        struct stat sbuf;
+        struct utimbuf tbuf;
+
+        if (argc != 2) {
+                printf("Usage: %s [path]\n", argv[0]);
+        }
+
+        if (stat(argv[1], &sbuf) < 0) {
+                printf("%s: %s\n", argv[1], strerror(errno));
+                exit(0);
+        }
+
+        tbuf.actime = sbuf.st_atim.tv_sec;
+        tbuf.modtime = time(NULL);
+
+        if (utime(argv[1], &tbuf) < 0) {
+                printf("utime: %s\n", strerror(errno));
+                exit(0);
+        }
+
+        return 0;
+}
+#+END_SRC
+
+* Challenge #13
+
+The question for this exercise is, "[w]hat does this SSE code do?" Uh oh. I
+don't know anything about SSE. Not the end of the world, though. I always
+appreciate an opportunity to learn. Here are some notes I took on chapter 25 of
+Yurichev's book:
+
+_Vectorization_ is the process of taking several arrays as input and producing a
+single array as output. SIMD (Single Instruction, Multiple Data) is a way of
+optimizing vectorization by doing certain array-level operations in parallel.
+
+Intel's initial implementation of SIMD reused FPU register. SSE added 128-bit
+registers (%xmm*) that were separate from the FPU, and AVX added 256-bit
+registers that were separate from the FPU.
+
+Well, that doesn't seem too complicated, and the exercise only uses two
+instructions: =movdqu=, which loads a 16-byte value from memory into an %xmm*
+register, and =pmaxub=, which calculates the maximum values between two %xmm*
+registers.
+
+#+BEGIN_SRC c
+void f(int *dest, int *a, int *b)
+{
+        int i;
+
+        // xor rax, rax
+        // ...
+        // add rax, 16
+        // cmp rax, 1024
+        // jne .L4
+        // ...
+        // .L4:
+        for (i = 0; i < 256; i++) {
+                // movdqu xmm0, XMMWORD PTR [rsi+rax]
+                // movdqu xmm1, XMMWORD PTR [rdx+rax]
+                // pmaxub xmm0, xmm1
+                // movdqu XMMWORD PTR [rdi+rax], xmm0
+                dest[i] = a[i] > b[i] ? a[i] : b[i];
+        }
+
+        // rep ret
+        return;
+}
+#+END_SRC
+
+=f= will fill an array, =dest=, such that the element at each index contains the
+greater value between =a= and =b= for that index.
+
+* Challenge #14
+
+The challenge description explains that, "[n]ow that's easy," and gives both
+.NET and Java bytecode disassemblies. I am not familiar with either bytecode
+format, but I do know Java (unfortunately), so I went with that.
+
+#+BEGIN_SRC java
+public class Challenge14 {
+    public static boolean f(char a) {
+        //  0: iload_1
+        //  1: bipush        97
+        //  3: if_icmplt     14
+        //  6: iload_1
+        //  7: bipush        122
+        //  9: if_icmpgt     14
+        if (a < 97 || a > 122) {
+            // 14: iload_1
+            // 15: bipush        65
+            // 17: if_icmplt     28
+            // 20: iload_1
+            // 21: bipush        90
+            // 23: if_icmpgt     28
+            if (a < 65 || a > 90) {
+                // 28: iconst_0
+                // 29: ireturn
+                return false;
+            }
+
+            // 26: iconst_1
+            // 27: ireturn
+            return true;
+        }
+
+        // 12: iconst_1
+        // 13: ireturn
+        return true;
+    }
+}
+#+END_SRC
+
+I'm not particularly confident in my translation -- the above is the result of
+skimming the [[https://en.wikipedia.org/wiki/Java_bytecode][Java bytecode]] and [[https://en.wikipedia.org/wiki/Java_bytecode_instruction_listings][Java bytecode instruction listings]] pages on
+Wikipedia -- but that translation does appear to convey a meaningful operation:
+telling whether or not =a= is an ASCII letter.
+
+* Challenge #15
+
+The challenge description explains that, "[n]ow that's really easy."
+
+#+BEGIN_SRC c
+void f(char *dst)
+{
+        int i;
+
+        // xorps   %xmm0, %xmm0
+        // movups  %xmm0, 240(%rdi)
+        // movups  %xmm0, 224(%rdi)
+        // movups  %xmm0, 208(%rdi)
+        // movups  %xmm0, 192(%rdi)
+        // movups  %xmm0, 176(%rdi)
+        // movups  %xmm0, 160(%rdi)
+        // movups  %xmm0, 144(%rdi)
+        // movups  %xmm0, 128(%rdi)
+        // movups  %xmm0, 112(%rdi)
+        // movups  %xmm0, 96(%rdi)
+        // movups  %xmm0, 80(%rdi)
+        // movups  %xmm0, 64(%rdi)
+        // movups  %xmm0, 48(%rdi)
+        // movups  %xmm0, 32(%rdi)
+        // movups  %xmm0, 16(%rdi)
+        // movups  %xmm0, (%rdi)
+        // ret
+        for (i = 0; i < 256; i++) {
+                dst[i] = '\0';
+        }
+}
+#+END_SRC
+
+I initially read the disassembly for this challenge as if it were Intel syntax,
+but it's AT&T. The operation is simple: =f= zeroes out a 256-byte buffer specified
+by the first parameter.
+
+* Challenge #16
+
+Only one disassembly is given for this challenge, and the description hints that
+it is from Clang: "[n]ow this is getting harder. Clang did a lot of optimization
+tricks and this code is heavily optimized for SSE2. Nevertheless, the original
+function is tiny and simple. What does it do?"
+
+In all honesty, I don't think that a translation to C is helpful. As the problem
+mentioned, there's heavy optimization for SSE2, and the assembly code only
+tangentially corresponds to what (I believe) is going on. Instead, I'll attempt
+to justify my partial conclusion that =f= sums an array of integers.
+
+Bytes from =rdi= (indexed with =rcx=) are interleaved into =xmm0= and =xmm2= with
+=pinsrw=, and continually added into =xmm3= and =xmm4=. Then, =xmm0= and =xmm2= are added,
+and =xmm1= is unpacked with =punpckhqdq xmm1, xmm1=. The pseudocode for the
+=punpckhqdq= instruction is given as:
+
+#+BEGIN_SRC c
+Destination[0..63] = Destination[64..127];
+Destination[64..127] = Source[64..127];
+#+END_SRC
+
+So it's unusual to see =xmm1= as both the "Source" and "Destination". This is
+followed by a =paddq xmm1, xmm0=.
+
+I can't really confirm any of this because of the =movdqa xmm1, xmmword ptr
+[rip + .LCPI0_0]= instruction. Some sort of mask is being used in those =pand
+xmm0, xmm1= and =pand xmm2, xmm1= instructions, and I suspect that it's one of many
+tricks coming together so the function works for an array of _integers_, but we
+aren't given =.LCPI0_0=, so I can't tell for sure.
+
+This also means that I can't assemble what's given. If anyone out there is
+experienced in SIMD and would to share some tips for making sense of this one,
+I'd really appreciate it.
+
+* Challenge #17
+
+The description explains that "[t]his is a quite esoteric piece of code, but
+nevertheless, the task it does is very mundane and well-known to anyone. The
+function has 4 32-bit arguments and returns a 32-bit one."
+
+#+BEGIN_SRC c
+int f(int a, int b, int c, int d)
+{
+        int tmp1, tmp2;
+
+        // sub edx, edi
+        c -= a;
+
+        // mov r8d, ecx
+        // ...
+        // sub r8d, esi
+        tmp1 = d - b;
+
+        // mov ecx, 63
+        d = 63;
+
+        // mov eax, edx
+        // sar eax, cl
+        // and eax, edx
+        tmp2 = (c >> (d & 0xff)) & c;
+
+        // mov edx, r8d
+        // sar edx, cl
+        // ...
+        // and edx, r8d
+        c = (tmp1 >> (d & 0xff)) & tmp1;
+
+        // add edi, eax
+        a += tmp2;
+
+        // add esi, edx
+        // sub esi, edi
+        b += c - a;
+
+        // mov eax, esi
+        // sar eax, cl
+        // and eax, esi
+        // add eax, edi
+        // ret
+        return ((b >> (d & 0xff)) & b) + a;
+}
+#+END_SRC
+
+The initial translation is quite messy, but observe that =d= has a constant value
+of =63=, and =63 & 0xff= is just =63=. Still, there are a number of snippets that look
+like =(c >> (d & 0xff)) & c=, and it isn't obvious what that does.
+
+#+BEGIN_SRC c
+int black_box(int a)
+{
+        return (a >> 63) & a;
+}
+
+int main(void)
+{
+        int i;
+
+        for (i = 0; i >= 0; i += 1) {
+                if (black_box(i) != 0) {
+                        printf("black_box(%d) = %d\n", i, black_box(i));
+                }
+        }
+
+        for (i = 0; i <= 0; i -= 1) {
+                if (black_box(i) != i) {
+                        printf("black_box(%d) = %d\n", i, black_box(i));
+                }
+        }
+
+
+        return 0;
+}
+#+END_SRC
+
+#+BEGIN_SRC
+re.c: In function 'black_box':
+re.c:64:13: warning: right shift count >= width of type [-Wshift-count-overflow]
+   return (a >> 63) & a;
+             ^~
+#+END_SRC
+
+I'm not sure if this is the intended behavior, but on amd64, this acts as
+\(min(x, 0)\). A first step at simplification can be made.
+
+#+BEGIN_SRC c
+#define MIN(a, b) (a < b ? a : b)
+
+int f(int a, int b, int c, int d)
+{
+        a += MIN(c - a, 0);
+        c = MIN(d - b, 0);
+        b += c - a;
+        return MIN(b, 0) + a;
+}
+#+END_SRC
+
+And this can be further cleaned up into a one-liner.
+
+#+BEGIN_SRC c
+#define MIN(a, b) (a < b ? a : b)
+
+int f(int a, int b, int c, int d)
+{
+        return a + \
+                MIN(b - a + MIN(d - b, 0) - MIN(c - a, 0), 0) + \
+                MIN(c - a, 0);
+}
+#+END_SRC
+
+And this happens to be an interesting implementation of \(min(a, b, c, d)\).
+
+* Challenge #18
+
+For challenges with more complicated control flow, I've been drawing the basic
+blocks out on a sheet of paper and drawing arrows between them to identify which
+transitions represent loops, and which transitions represent conditionals. That
+didn't work particularly well for this challenge, though. The solution instead
+came to me instead by just staring at the disassembly for some time.
+
+#+BEGIN_SRC c
+#include <ctype.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+int f3(char *a, uint64_t *b, uint64_t *c, uint64_t *d, uint64_t *e, uint64_t *f)
+{
+        int i;
+        char *cur;
+
+        if (strlen(a) != 36) {
+                return a;
+        }
+
+        cur = a;
+        i = 0;
+
+        while (i != 37) {
+                if (i == 8 || i == 13 || i == 18 || i == 23) {
+                        if (*cur != '-') {
+                                return (char *) -1;
+                        }
+                } else {
+                        if (i == 36 && *cur == '\0') {
+                                break;
+                        }
+
+                        if (!isxdigit(*cur)) {
+                                return (char *) -1;
+                        }
+                }
+
+                i++;
+                cur++;
+        }
+
+        *b = strtoul(a, NULL, 16);
+        *c = strtoul(a + 9, NULL, 16);
+        *d = strtoul(a + 14, NULL, 16);
+        *e = strtoul(a + 19, NULL, 16);
+        *f = strtoull(a + 24, NULL, 16);
+        return 0;
+}
+#+END_SRC
+
+The code appears to implement a [[https://en.wikipedia.org/wiki/Universally_unique_identifier][UUID]] parser.
+
+* Challenge #19
+
+This challenge was particularly difficult. I began by translating the individual
+basic blocks to C, and connecting them with =goto=.
+
+#+BEGIN_SRC c
+#include <stdlib.h>
+#include <stdio.h>
+
+char *f2_bb(char *a, int b, int c, char *d)
+{
+        // rax <- a
+        // rbx <- a
+
+        // QWORD PTR [rsp+24] <- d
+        // QWORD PTR [rsp+16] <- b
+        // QWORD PTR [rsp+8]  <- c
+
+        int i;
+        int j;
+        int k;
+        int *ret;
+
+        // f2:
+        {
+                // test rcx, rcx
+                // jne .L21
+                if (c == 0) {
+                        // add rsp, 32
+                        // pop rbx
+                        // ret
+                        return a;
+                }
+
+                goto BBL21;
+        }
+
+        // .L21:
+        {
+        BBL21:
+                // lea rdi, [4+rcx*4]
+                // ...
+                // call malloc
+                ret = malloc(c * 4 + 4);
+
+                // ...
+                // mov DWORD PTR [rax], -1
+                ret[0] = -1;
+
+                // ...
+                // mov DWORD PTR [rax+4], 0
+                ret[1] = 0;
+
+                // mov r9d, 1
+                i = 1;
+
+                // ...
+                // cmp r9, rcx
+                // je .L22
+                if (c == 1) {
+                        goto BBL22;
+                }
+
+                goto BBL8;
+        }
+
+        // .L8:
+        {
+        BBL8:
+                // mov edi, DWORD PTR [rax+r9*4]
+                // lea r8d, [rdi+1]
+                // test r8d, r8d
+                // mov DWORD PTR [rax+4+r9*4], r8d
+                if ((ret[i + 1] = ret[i] + 1) <= 0) {
+                        // jle .L5
+                        goto BBL5;
+                }
+
+                // movzx r10d, BYTE PTR [rdx+r9]
+                // movsx r8, r8d
+                // cmp r10b, BYTE PTR [rdx-1+r8]
+                if (d[i] != d[ret[i + 1] - 1]) {
+                        // jne .L7
+                        goto BBL7;
+                }
+
+                // jmp .L5
+                goto BBL5;
+        }
+
+        // .L7:
+        {
+        BBL7:
+                // mov r8d, DWORD PTR [rax-4+r8*4]
+                // add r8d, 1
+                // test r8d, r8d
+                // mov DWORD PTR [rax+4+r9*4], r8d
+                if ((ret[i + 1] = ret[ret[i + 1] - 1] + 1) > 0) {
+                        // jg .L23
+                        goto BBL23;
+                }
+
+                goto BBL5;
+        }
+
+        // .L23:
+        {
+        BBL23:
+                // movsx r8, r8d
+                // cmp BYTE PTR [rdx-1+r8], r10b
+                if (d[ret[i + 1] - 1] == ret[i]) {
+                        // je .L5
+                        goto BBL5;
+                }
+
+                goto BBL7;
+        }
+
+        // .L5:
+        {
+        BBL5:
+                // add r9, 1
+                // cmp r9, rcx
+                if (++i != c) {
+                        // jne .L8
+                        goto BBL8;
+                }
+
+                goto BBL22;
+        }
+
+        // .L22:
+        {
+        BBL22:
+                // xor r8d, r8d
+                // xor r10d, r10d
+                // xor edi, edi
+                i = j = k = 0;
+                goto BBL9;
+        }
+
+        // .L9:
+        {
+        BBL9:
+                // cmp rdi, rsi
+                // jae .L24
+                if (j >= b) {
+                        goto BBL24;
+                }
+
+                goto BBL14;
+        }
+
+        // .L14:
+        {
+        BBL14:
+                // test r8d, r8d
+                if (i < 0) {
+                        // js .L10
+                        goto BBL10;
+                }
+
+                // movsx r9, r8d
+                // movzx r11d, BYTE PTR [rdx+r9]
+                // cmp BYTE PTR [rbx+rdi], r11b
+                if (d[i] == a[j]) {
+                        // je .L10
+                        goto BBL10;
+                }
+
+                // cmp rdi, rsi
+                // mov r8d, DWORD PTR [rax+r9*4]
+                i = ret[i];
+
+                if (j < b) {
+                        // jb .L14
+                        goto BBL14;
+                }
+
+                goto BBL24;
+        }
+
+        // .L10:
+        {
+        BBL10:
+                // add r8d, 1
+                // add r10d, 1
+                // movsx rdi, r8d
+                j = ++i;
+                k++;
+
+                // cmp rdi, rcx
+                if (j == c) {
+                        // je .L18
+                        goto BBL18;
+                }
+
+                // movsx rdi, r10d
+                j = k;
+
+                // jmp .L9
+                goto BBL9;
+        }
+
+        // .L18:
+        {
+        BBL18:
+                // movsx r10, r10d
+                // sub r10, rcx
+                k -= c;
+
+                // add rbx, r10
+                a += k;
+
+                // jmp .L13
+                goto BBL13;
+        }
+
+
+        // .L24:
+        {
+        BBL24:
+                // xor ebx, ebx
+                a = NULL;
+                goto BBL13;
+        }
+
+        // .L13:
+        {
+        BBL13:
+                // mov rdi, rax
+                // call free
+                free(ret);
+
+                // add rsp, 32
+                // mov rax, rbx
+                // pop rbx
+                // ret
+                return a;
+        }
+
+}
+#+END_SRC
+
+#+BEGIN_SRC c
+char *f2(char *a, int b, int c, char *d)
+{
+        int i;
+        int j;
+        int k;
+        int *ret;
+
+        if (c == 0) {
+                return a;
+        }
+
+        ret = malloc((c + 1) * sizeof(int));
+        ret[0] = -1;
+        ret[1] = 0;
+
+        i = 1;
+
+        do {
+                if ((ret[i + 1] = ret[i] + 1) > 0
+                    && d[i] != d[ret[i] - 1]) {
+                        while ((ret[i + 1] = ret[ret[i + 1] - 1] + 1) > 0) {
+                                if (d[ret[i + 1] - 1] == ret[i]) {
+                                        break;
+                                }
+                        }
+                }
+        } while (++i < c);
+
+        i = j = k = 0;
+
+        while (j < b) {
+                if (i < 0 || d[i] == a[j]) {
+                        j = ++i;
+                        k++;
+
+                        if (j == c) {
+                                free(ret);
+                                return a + k - c;
+                        }
+
+                        j = k;
+                }
+                i = ret[i];
+        }
+
+        free(ret);
+        return NULL;
+}
+#+END_SRC
+
+This challenge was nightmarishly difficult. I plan to come back to it near the
+end of the year, but for now, consider this challenge incomplete. I've been
+banging my head against a wall trying to make sense of it for a number of weeks
+now, and I still don't have a good answer for what it does.
+
+* Challenge #20
+
+Another challenge described as "easy." This time, it really is.
+
+#+BEGIN_SRC c
+#include <stdlib.h>
+
+float f4()
+{
+    return rand() * ((float) 4.65661287307739257813e-10);
+}
+#+END_SRC
+
+I did defer to an ISA reference for =cvtsi2ss= and =mulss= as I'm not particularly
+familiar with x86's floating point instructions. This challenge also gave me an
+opportunity to use [[https://float.exposed/0x30000000][float.exposed]] to turn =.long 805306368= into a floating point
+constant, but \(4.65661287307739257813 \cdot 10^{-10}\) isn't any more
+comprehensible. The purpose of =f4= is clearer when observing the output.
+
+#+BEGIN_SRC prog
+...
+0.086556
+0.535690
+0.176955
+0.791683
+0.575702
+0.418118
+0.952373
+...
+#+END_SRC
+
+=f4= returns a random floating point number on the range \([0, 1]\).
+
+* Challenge #21
+
+I was able to complete the translation for this challenge in under five minutes,
+which I'm quite proud of.
+
+#+BEGIN_SRC c
+#include <string.h>
+
+int f1(char *a, char *b)
+{
+        // rbp <- a
+        // rbx <- b
+
+        int offset;
+
+        // push r12
+        // push rbp
+        // mov rbp, rdi
+        // push rbx
+        // mov rbx, rsi
+        // call strlen
+        // mov rdi, rbx
+        // mov r12, rax
+        // call strlen
+        // sub r12, rax
+        offset = strlen(a) - strlen(b);
+
+        // mov rsi, rbx
+        // lea rdi, [rbp+0+r12]
+        // call strcmp
+        // pop rbx
+        // test eax, eax
+        // pop rbp
+        // sete al
+        // pop r12
+        // ret
+        return strcmp(a + offset, b) ? 1 : 0;
+}
+#+END_SRC
+
+=f= is a simple "ends with" predicate function. It returns =1= if =a= ends with the
+substring =b=.
+
+* Challenge #22
+
+I stopped when I got to the =// ...=. I'd figured it out by then, and =-Os= made the
+assembly for this quite messy.
+
+#+BEGIN_SRC c
+int f2(int *a, int b, int *c, int d)
+{
+        // rcx <- a[b]
+        // eax <- d + 1
+        // ebp <- c[0]
+
+        int i; // r8
+        int j;
+        int *cur;
+
+        i = d + 1;
+        j = 0;
+
+        while (j < i){
+                while (c[j + 1] <= c[0] && j < d)
+                        j++;
+
+                cur = &a[i - 1];
+                while (*cur-- > c[0]);
+
+                if (j < i) {
+                        c[j + 1] ^= *(cur + 1);
+                        *cur ^= *(cur + 1);
+                        c[j + 1] ^= *cur;
+                }
+        }
+
+        c[0] ^= *(cur + 1);
+        // ...
+
+        return 0;
+}
+
+void f1(int *a, int b, int *c, int d)
+{
+        int ret;
+
+        while (b < d) {
+                ret = f2(a, b, c, d);
+                f1(a, b, c, ret - 1);
+                b = ret + 1;
+        }
+}
+#+END_SRC
+
+The hint for this challenge is that "[t]his can be tricky, but the algorithm is
+well known and heavily used almost everywhere," which gave it away once I got to
+the mess of =xor= instructions. This is the [[https://en.wikipedia.org/wiki/XOR_swap_algorithm][XOR swap algorithm]], extended so that
+it reverses the contents of =a= and =c=.
+
+#+BEGIN_EXPORT html
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/latest.js?config=TeX-MML-AM_CHTML"></script>
+#+END_EXPORT

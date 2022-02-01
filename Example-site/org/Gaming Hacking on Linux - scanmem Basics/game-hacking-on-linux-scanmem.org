@@ -1,0 +1,8 @@
+#+TITLE: Game Hacking on Linux - scanmem Basics
+#+DATE: <2017-06-18 Sun 11:51>
+#+TAGS: tutorial, reverse-engineering, linux, video-games, game-hacking
+#+CROSSPOST: https://0x00sec.org/t/game-hacking-on-linux-scanmem-basics/2458
+
+Hey, this is a very brief tutorial on scanmem, a memory manipulation tool for
+Linux that’s well suited to game hacking. I’ll be using GZDoom as an example,
+but you should be able to follow along with any game you want.

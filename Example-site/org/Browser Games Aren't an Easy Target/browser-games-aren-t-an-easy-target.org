@@ -1,0 +1,654 @@
+#+TITLE: Browser Games Aren't an Easy Target
+#+DATE: <2020-01-10 Fri 18:39>
+#+TAGS: writeup, programming, reverse-engineering, video-games, game-hacking, javascript
+
+If you're about my age and had a similarly dull upbringing, you probably also
+have memories of playing video games behind a teacher's back whenever class
+involved going to some sort of "computer lab." Flash games were the thing when I
+was in elementary school, and when I was in middle school, I'd bring Quake with
+me on a flash drive. By the time I was in high school, I'd realized that these
+opportunities were better spent getting a head start on homework for other
+classes, but I did have a few friends who still passed the time playing video
+games. Rather than Flash games or Quake, though, these were browser games using
+the new-fangled HTML5 canvas. I'd practically forgotten these games existed
+until someone from my capture-the-flag team mentioned "krunker.io". [[http://iogames.space/][Apparently]]
+it's one of the more popular ones. It got me thinking about how I'd go about
+writing cheats for a game in the browser. Writing cheats for CS:GO was a breeze,
+so why would this be any harder? I had some time to spare over winter break, so
+I decided to give it a go and see what kind of damage I could do.
+
+* Reconnaissance
+
+[[https://mitmproxy.org/][mitmproxy]] was pretty much the only tool I used in this project. The first thing
+I did was hook my browser up to it and load the game to see what kinds of
+requests it made.[fn:1]
+
+[[./mitmproxy-initial.png]]
+
+I've truncated it here because the flows that came afterwards were just assets.
+Right off the bat, we're learning quite a bit about the game's infrastructure.
+Namely that it has three parts:
+
+1. 'krunker.io', the URL you type into your browser, which is where the code is.
+2. 'assets.krunker.io', for serving up textures and models.
+3. 'matchmaker.krunker.io', which appears to be some sort of REST API for
+   finding a game.
+
+I'm sure that reversing the Matchmaking API would be fun, but there's more fun
+to be had in messing with the code.
+
+** Code
+
+We can see from the flow that the following libraries are loaded:
+
+- 'jquery-3.2.1.min.js'
+- 'jquery-ui.js'
+- 'howler.min.js'
+- 'Tween.min.js'
+- 'nipplejs.min.js'
+- 'zip.js'
+- 'zip-ext.js'
+
+We all know what jQuery is. After consulting the all-mighty search engine of the
+interwebs, I figured out that [[https://howlerjs.com/][howler.js]] is an audio library, that [[https://github.com/tweenjs/tween.js/][tween.js]] is a
+library for animations, and that [[https://yoannmoi.net/nipplejs/][nippleJS]] is a virtual joystick for mobile
+devices.[fn:2] I was tripped up by 'zip.js' and 'zip-ext.js' initially, thinking
+that these are where the code is, but it didn't take long to realize that these
+constitute the [[https://gildas-lormeau.github.io/zip.js/][zip.js]] library for working with ZIP files. Well, if the game code
+isn't in any of those files, then it has to be inlined in a =<script>= tag
+somewhere. A quick =grep= reveals that it is, indeed, at the bottom of the page.
+
+* Injecting Code
+
+This is where one of the more interesting features of mitmproxy comes in. I
+split the page's HTML into three files: one containing everything leading up to
+the script, one containing the script itself, and one containing everything that
+follows the script. Then, I whipped up a quick [[https://docs.mitmproxy.org/stable/addons-overview/][addon]] for piecing those together
+on the fly when we see a request for 'krunker.io'.
+
+#+BEGIN_SRC python
+from mitmproxy import ctx
+
+class Replacer:
+    def __init__(self):
+        with open("header.html") as f:
+            self.header = f.read()
+        with open("game.js") as f:
+            self.game = f.read()
+        with open("footer.html") as f:
+            self.footer = f.read()
+
+    def response(self, flow):
+        if flow.request.host == "krunker.io" and flow.request.path == "/":
+            flow.response.set_text(self.header + self.game + self.footer)
+
+addons = [
+    Replacer()
+]
+#+END_SRC
+
+With an environment set up for experimenting, it was time to get into it. I ran
+[[https://beautifier.io/][beautifier.io]] on 'game.js' and began to peer around for strings of note. There's
+a massive base64 blob in the middle of the file that stood out like a sore
+thumb, so I decoded it to see what it was.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~ $ base64 -d < /tmp/extracted.b64 | file -
+/dev/stdin: WebAssembly (wasm) binary module version 0x1 (MVP)
+#+END_SRC
+
+Whoa, holy shit! This is the first time I'm seeing WebAssembly in the wild!
+
+Thinking I'd want to modify the blob, I extracted it to a file and modified the
+addon slightly.
+
+#+BEGIN_SRC python
+from base64 import b64encode
+
+from mitmproxy import ctx
+
+class Replacer:
+    def __init__(self):
+        with open("header.html") as f:
+            self.header = f.read()
+        with open("game.js") as f, open("krunker.wasm", "rb") as g:
+            self.game = f.read().replace("[REPLACE ME]", b64encode(g.read()).decode())
+        with open("footer.html") as f:
+            self.footer = f.read()
+
+    def response(self, flow):
+        if flow.request.host == "krunker.io" and flow.request.path == "/":
+            flow.response.set_text(self.header + self.game + self.footer)
+
+addons = [
+    Replacer()
+]
+#+END_SRC
+
+Now, in addition to stringing together our three files, we're also reading in
+'krunker.wasm', the binary version of the base64 blob, encoding it to base64,
+and splicing it to the script where I'd substituted the original base64 blob
+with "[REPLACE ME]".
+
+Running =strings= on the wasm file reveals a couple of things. First, this part of
+the game is written in Rust.
+
+#+BEGIN_SRC prog
+/rustc/73528e339aae0f17a15ffa49a8ac608f50c6cf14/src/libstd/io/impls.rs
+TLS Context not set. This is a rustc bug. Please file an issue on https://github.com/rust-lang/rust.
+attempt to calculate the remainder with a divisor of zero
+#+END_SRC
+
+And, second, we're going to be met with some resistance.
+
+#+BEGIN_SRC prog
+getElementsByTagNameCould not get elementsscriptpatchControlpatchPlayerspatchOnTickpatchOnKeyPressedpatchForAimbotDetected injected scriptHACKER
+...
+validateEvalUnmodifiedCould not set global validateEvalUnmodifiedCould not get eval functionwindow.validateEvalUnmodified("");  // Ahoy, haxor kiddies! 
+Eval is tampered; preventing execution
+#+END_SRC
+
+I cracked open the Firefox debugger and found that the game wasn't spending a
+lot of time in the WebAssembly component. Instead, there was a pseudo-file
+called "SOURCE" that I could find no reference to. My first hypothesis was that
+the code was zipped, so I tried stubbing out the methods of 'zip.js'.
+
+#+BEGIN_SRC javascript
+r.zip = {
+  Reader: function () {
+    console.log("Reader")
+  },
+  Writer: function () {
+    console.log("Writer")
+  },
+  BlobReader: function () {
+    console.log("BlobReade")
+  },
+  Data64URIReader: function () {
+    console.log("Data64URIReader")
+  },
+  TextReader: function () {
+    console.log("TextReader")
+  },
+  BlobWriter: function () {
+    console.log("BlobWriter")
+  },
+  Data64URIWriter: function () {
+    console.log("Data64URIWriter")
+  },
+  TextWriter: function () {
+    console.log("TextWriter")
+  },
+  createReader: function () {
+    console.log("createReader")
+  },
+  createWriter: function () {
+    console.log("createWriter")
+  },
+}
+#+END_SRC
+
+But the game loaded fine. So I went back to the debugger and placed some
+breakpoints around where the WebAssembly module is loaded, realizing that its
+only purpose is to deobfuscate the JavaScript that eventually makes it into that
+"SOURCE" pseudo-file I saw earlier. I figured this out by hooking the
+=getStringFromWasm= function in 'game.js' and looking for any sort of JavaScript
+code. I extracted these to files so I could beautify and inspect them. The
+contents of "SOURCE" were in the second of these.
+
+My first idea was to get rid of the WebAssembly and just inject the loaded
+JavaScript instead. 
+
+#+BEGIN_SRC python
+with open("game.js") as f, open("krunker.wasm", "rb") as g, open("extracted.2.js") as h:
+    # self.game = f.read().replace("[REPLACE ME]", b64encode(g.read()).decode())
+    self.game = h.read()
+#+END_SRC
+
+But this breaks the game horribly. Inspecting the call stack in the debugger, I
+found that the code in "SOURCE" is referenced twice. The second time being from
+=__wbg_newwithargs_10def9c4239ab893=, which looks like
+
+#+BEGIN_SRC javascript
+imports.wbg.__wbg_newwithargs_10def9c4239ab893 = function (A, g, Q, B) {
+  return addHeapObject(new Function(getStringFromWasm(A, g), getStringFromWasm(Q, B)))
+},
+#+END_SRC
+
+I thought that the code might have been injected by an =eval= or by adding a
+=script= element to the document, but here it's using JavaScript's =Function=
+constructor -- a feature I had no idea existed.
+
+In my initial attempt to get a hold of the code, I encoded my extracted version
+of "SOURCE" as base64, introduced a string called =replacement_code=, and replaced
+the implementation of =__wbg_newwithargs_10def9c4239ab893= with this:
+
+#+BEGIN_SRC javascript
+// return addHeapObject(new Function(getStringFromWasm(A, g), getStringFromWasm(Q, B)))
+return addHeapObject(new Function(getStringFromWasm(A, g), atob(replacement_code)));
+#+END_SRC
+
+This didn't work. So I added in some debug prints and realized that the function
+wasn't being called with the same arguments every time (which should be
+unsurprising).
+
+Here was my second attempt:
+
+#+BEGIN_SRC javascript
+if (getStringFromWasm(Q, B).startsWith("!")) {
+  console.log("Injecting code...")
+  return addHeapObject(new Function(getStringFromWasm(A, g), atob(replacement_code)));
+}
+return addHeapObject(new Function(getStringFromWasm(A, g), getStringFromWasm(Q, B)));
+#+END_SRC
+
+This didn't work either. If we run the game twice and inspect the value of
+=getStringFromWasm(A, g)= (the argument list), it clearly isn't the same both
+times. So I decided to see if the function code was different, too.
+
+#+BEGIN_SRC prog
+jakob@Epsilon ~/ $ radiff2 -c {1,2}.js
+File size differs 2462470 vs 2461765
+Buffer truncated to 2461765 byte(s) (705 not compared)
+86611
+#+END_SRC
+
+So... the WebAssembly is essentially generating JavaScript on-the-fly. Of
+course, all renditions of the code do the same thing, but the variable names are
+changing. My first thought was to stub out all of the nondeterministic imports
+like =__wbg_random_09364f2d8647f133=, but this just broke things. Attempt three
+was to see if I could add something to the function code and have it still work.
+
+#+BEGIN_SRC javascript
+return addHeapObject(new Function(getStringFromWasm(A, g), getStringFromWasm(Q, B) + " console.log('hello, world!'"));
+#+END_SRC
+
+The game didn't load this time, either. Strange, but then I remembered the
+rather hostile strings in 'krunker.wasm' and decided to see what was happening
+in the debugger. I hooked =__wbg_newwithargs_10def9c4239ab893= so that when the
+=Function= object is created, that reference is saved to a global called
+=the_function=. Then, I hooked =getObject=, the JavaScript glue for getting
+something from the heap from WebAssembly, and if the object being returned is
+=the_function=, I trip a breakpoint. The first time the function is referred to is
+in =__wbg_toString_c663742ecc5b25ea=. If we've tampered with it, it goes straight
+to =__wbindgen_object_drop_ref=. Otherwise, it goes to =__wbg_call_04d7c0ad06df27c9=
+before being freed. So it seems the WebAssembly module is doing some sort of
+tampering checking, checking the source code of the resultant =Function= to ensure
+that we haven't hooked the =Function= constructor or anything like that. This is
+actually pretty easy to get around. We could
+
+1. Hook =__wbg_toString_c663742ecc5b25ea= to return a fake value when it's trying
+   to get the source code of the =Function=.
+2. Hook =__wbg_call_04d7c0ad06df27c9= and pull an [[https://www.youtube.com/watch?v=mC1ikwQ5Zgc][Indiana Jones]], calling a
+   different function.
+
+I went with the latter. To summarize the game plan, we'll hook the place where
+the =Function= is constructed, get a reference to that =Function= object, hook the
+place where it's called, and if it's the same reference we got before, call a
+=Function= object of our own creation instead. Here's what my patch looks like:
+
+#+BEGIN_SRC javascript
+imports.wbg.__wbg_newwithargs_10def9c4239ab893 = function (A, g, Q, B) {
+  if (getStringFromWasm(Q, B).startsWith("!")) {
+    console.log("[PATCH] Got reference to game code function!");
+    console.log("[PATCH] Code path: __wbg_newwithargs_10def9c4239ab893")
+    the_function = new Function(getStringFromWasm(A, g), getStringFromWasm(Q, B));
+    my_function = new Function(getStringFromWasm(A, g), "console.log('Successfully hooked!');" + getStringFromWasm(Q, B));
+    return addHeapObject(the_function);
+  }
+  return addHeapObject(new Function(getStringFromWasm(A, g), getStringFromWasm(Q, B)))
+},
+...
+imports.wbg.__wbg_call_04d7c0ad06df27c9 = function (A, g, Q, B, I) {
+  try {
+    const target = getObject(A);
+    if (target === the_function) {
+      console.log("[PATCH] Preparing to Indiana Jones that shit...")
+      return addHeapObject(my_function
+                           .call(getObject(g), getObject(Q), getObject(B), getObject(I)))
+    }
+    return addHeapObject(getObject(A)
+                         .call(getObject(g), getObject(Q), getObject(B), getObject(I)))
+  } catch (A) {
+    handleError(A)
+  }
+},
+#+END_SRC
+
+#+BEGIN_SRC prog
+...
+[PATCH] Got reference to game code function!
+[PATCH] Code path: __wbg_newwithargs_10def9c4239ab893
+[PATCH] Preparing to Indiana Jones that shit...
+Successfully hooked!
+...
+#+END_SRC
+
+This time, our modification of the code worked. Nice! With that, we can address
+one quality-of-life issue that was starting to get on my nerves.
+
+#+BEGIN_SRC python
+from base64 import b64encode
+from os.path import getmtime
+
+from mitmproxy import ctx
+
+def create_page(header, prefix, game, wasm, footer):
+    return "".join([
+        header,
+        "let replacement_code=\"", b64encode(prefix).decode(), "\";",
+        game.replace("[REPLACE ME]", b64encode(wasm).decode()),
+        footer
+    ])
+
+class Replacer:
+    def __init__(self):
+        self.most_recent_update = 0
+        self.check_for_updates()
+
+    def check_for_updates(self):
+        for filename in ["header.html", "extracted.2.js", "game.js", "krunker.wasm", "footer.html"]:
+            if getmtime(filename) > self.most_recent_update:
+                self.most_recent_update = getmtime(filename)
+                self.update_replacement()
+                print("Updating files...")
+
+    def update_replacement(self):
+        with open("header.html") as f:
+            self.header = f.read()
+        with open("extracted.2.js", "rb") as f:
+            self.prefix = f.read()
+        with open("game.js") as f, open("krunker.wasm", "rb") as g:
+            self.game = f.read()
+            self.wasm = g.read()
+        with open("footer.html") as f:
+            self.footer = f.read()
+
+        self.replacement = create_page(
+            self.header,
+            self.prefix,
+            self.game,
+            self.wasm,
+            self.footer
+        )        
+
+    def response(self, flow):
+        self.check_for_updates()
+        if flow.request.host == "krunker.io" and (flow.request.path == "/" or flow.request.path.startswith("/?game=")):
+            flow.response.set_text(self.replacement)
+
+addons = [
+    Replacer()
+]
+#+END_SRC
+
+# Footnote: I'd like to experiment with parsing it into an AST and walking that.
+
+Because the names of references are generated at runtime, we can't really just
+substitute in our own code string. We have to modify the string that's generated
+by the WebAssembly module. We'll have to find something worth changing before we
+can do that, though, so I began to read through the generated source code. The
+first thing that stood out to me was an array of weapon definitions. Here's how
+the sniper rifle is defined:
+
+#+BEGIN_SRC javascript
+{
+  'name': 'Sniper Rifle',
+  'src': 'weapon_1',
+  'icon': 'icon_1',
+  'sound': 'weapon_1',
+  'animWhileAim': !0x0,
+  'trail': !0x0,
+  'flap': {
+    'src': 'flap_0',
+    'rot': 2.1,
+    'scl': 0x1,
+    'zOff': 0.43,
+    'xOff': 0.17,
+    'yOff': 0.53
+  },
+  'noAo': !0x0,
+  'VuFlFKJOHFGfinUeccOKbaQQPyhjvfYD': !0x0,
+  'type': 0x0,
+  'scope': !0x0,
+  'swapTime': 0x12c,
+  'aimSpeed': 0x78,
+  'spdMlt': 0.95,
+  'ammo': 0x3,
+  'reload': 0x5dc,
+  'dmg': 0x64,
+  'pierce': 0.2,
+  'range': 0x3e8,
+  'dropStart': 0xe6,
+  'dmgDrop': 0x1e,
+  'scale': 0.00115608717587935,
+  'leftHoldY': -0.7,
+  'rightHoldY': -0.75,
+  'leftHoldZ': 2.4,
+  'rightHoldZ': 0.4,
+  'xOff': 0.8,
+  'yOff': -0.68,
+  'zOff': -1.8,
+  'xOrg': 0x0,
+  'yOrg': -0.55,
+  'zOrg': -0.8,
+  'cLean': 0.2,
+  'cRot': 0.2,
+  'cDrop': 0.1,
+  'inspectR': 0.2,
+  'inspectM': 0.1,
+  'muzOff': 0x8,
+  'muzMlt': 1.6,
+  'rate': 0x384,
+  'spread': 0x104,
+  'zoom': 2.7,
+  'leanMlt': 1.5,
+  'recoil': 0.009,
+  'recoilR': 0.02,
+  'recover': 0.993,
+  'recoverY': 0.997,
+  'recoverF': 0.975,
+  'recoilYM': 0.35,
+  'recoilZ': 1.4,
+  'recoilAnim': {
+    'time': 0x118,
+    'aimTime': 0x1f4,
+    'recoilTweenY': 0.3
+  },
+  'jumpYM': 0.15,
+  'rumble': 0.9,
+  'rumbleDur': 0x1f4,
+  'icnPad': 0x9
+}
+#+END_SRC
+
+Some parts of it are obfuscated,[fn:4] but some aren't. My first attempt at a
+cheat was to set all of the =recoil= and =spread= values to zero.
+
+#+BEGIN_SRC javascript
+code = code.replace(/('recoil\w*?':)[0-9\x\. ]*?,/g, function(match, p1, offset, string) {
+  console.log(match);
+  return p1 + "0.000,";
+});
+code = code.replace(/('spread':)[0-9\x\. ]*?,/g, function(match, p1, offset, string) {
+  console.log(match);
+  return p1 + "0x0,";
+});
+#+END_SRC
+
+This seemed to work until I actually tried shooting people and realized that my
+bullets weren't hitting anything, which made me suspect that the server was
+responsible for taking the spread into account.
+
+I also came across the definitions for the game's "classes".
+
+#+BEGIN_SRC javascript
+{
+  'name': 'Triggerman',
+  'loadout': [0x1],
+  'secondary': !0x0,
+  'colors': [0xa77860, 0x3d3d3d, 0x232323, 0x282828, 0x6c5042, 0xbfbfbf],
+  'health': 0x64,
+  'segs': 0x6,
+  'speed': 1.05
+}
+#+END_SRC
+
+So I tried setting =speed= to something absurdly high, but after a few seconds of
+moving forward I'd be teleported back. Again, it seems the server is also
+calculating my movement and realizing that something's wrong.
+
+Rather than find which values are truly client-side and which are verified
+server-side, I decided to implement the bread and butter of client-side cheats:
+a wallhack. My thinking was that the easy way to go about this would be to patch
+every call to =gl.depthFunc= and set the =func= parameter to =gl.ALWAYS=.
+
+#+BEGIN_SRC javascript
+code = code.replace(/\['depthFunc'\]\(0x\d\d\d\)/g, function(match, p1, offset, string) {
+  return "['depthFunc'](0x207)";
+});
+#+END_SRC
+
+This actually worked, but not in a way that's helpful for getting an advantage
+in the game. So I had to be a bit more clever. Looking through 'extracted.2.js',
+it's pretty obvious that they're using [[https://threejs.org/][three.js]], and from experience, I know
+that when it comes to rendering something 2D over a three.js scene, most people
+opt for some sort of overlay. So I did a search for 'game-overlay', and found
+that it occurs only once.
+
+#+BEGIN_SRC javascript
+function (czO, czP, czQ) {
+  let czR = czQ(0x7),
+      czS = czQ(0x15),
+      czT = czQ(0x8),
+      czU = czQ(0x4),
+      czV = {};
+  var czW;
+  let czX = czV['canvas'] = document['getElementById']('game-overlay');
+
+  ...
+
+  czV['render'] = function (czO, czP, czQ, czU, czY) {
+    let cA3 = czV,
+        cAs = czX['width'] / czO,
+        cAt = czX['height'] / czO,
+        cAu = 'none' == menuHolder['style']['display'] && 'none' == endUI['style']['display'] && 'none' == killCardHolder['style']['display'],
+        cAv = czQ['camera']['OAyrBAIOyFXMWtKxEfkVjBvqsgcYuyWi']();
+    ...
+    for (cAw = 0x0; cAw < czP['players']['list']['length']; ++cAw) {
+      if (!(czW = czP['players']['list'][cAw])['active']) continue;
+      if (czW['aeWOplgwNeuXsCSinrkfFWfJBNPqqMsp'] || !czW['eaXYenBVjWrAqKUShuRgPGpSwPVbhVHm']) continue;
+      if (!czW['igkTahukFkFIrcwuUsvtqgPJfhPajghp']) continue;
+      if ((cAI = czW['eaXYenBVjWrAqKUShuRgPGpSwPVbhVHm']['position']['clone']())['y'] += czR['bSnWGqqv'] + czR['nameOffset'] - czW['crouchVal'] * czR['crouchDst'], 0x0 <= czW['hatIndex'] && (cAI['y'] += czR['nameOffsetHat']), !(0x1 <= 0x14 * (cAJ = Math['max'](0.3, 0x1 - czT['SHAokGxkzQABudAEqJwdYyVzJPmwCsxg'](cAv['x'], cAv['y'], cAv['z'], cAI['x'], cAI['y'], cAI['z']) / 0x258)) && czQ['frustum']['containsPoint'](cAI))) continue;
+      cAb['save'](), cAI['project'](czQ['camera']), cAI['x'] = (cAI['x'] + 0x1) / 0x2, cAI['y'] = (cAI['y'] + 0x1) / 0x2, cAb['translate'](cAs * cAI['x'], cAt * (0x1 - cAI['y'])), cAb['scale'](cAJ, cAJ);
+      let czO = 0x78,
+          czX = 0x1 == czV['nametagStyle'] ? 0x6 : 0x10;
+      if (0x0 == czV['nametagStyle'] || 0x3 == czV['nametagStyle']) {
+        cAb['fillStyle'] = 'rgba(0, 0, 0, 0.4)', cAb['fillRect'](-0x3c, -czX, czO, czX), cA3['dynamicHP'] && czW['hpChase'] > czW['health'] / czW['pAblSevloQuKmtUpAKdXIHpqBTWHCbRR'] && (cAb['fillStyle'] = '#FFFFFF', cAb['fillRect'](-0x3c, -czX, czO * czW['hpChase'], czX));
+        var cAA = czU && czU['team'] ? czU['team'] : window['spectating'] ? 0x1 : 0x0;
+        cAb['fillStyle'] = cAA == czW['team'] ? czS['teams'][0x0] : czS['teams'][0x1], cAb['fillRect'](-0x3c, -czX, czO * (czW['health'] / czW['pAblSevloQuKmtUpAKdXIHpqBTWHCbRR']), czX);
+      }
+      if (0x3 > czV['nametagStyle']) {
+        let czO = czW['name'],
+            czP = czW['clan'] ? '[' + czW['clan'] + ']' : null,
+            czQ = czW['level'];
+        cAb['font'] = '30px GameFont';
+        let czT = czQ && 0x1 != czV['nametagStyle'] ? cAb['measureText'](czQ)['width'] + 0xa : 0x0;
+        cAb['font'] = '20px GameFont';
+        let czU = cAb['measureText'](czO)['width'] + (czP ? 0x5 : 0x0),
+            czY = czT + czU + (czP ? cAb['measureText'](czP)['width'] : 0x0);
+        cAb['translate'](0x0, -czX - 0xa), cAb['fillStyle'] = 'white', cAb['font'] = '30px GameFont', czQ && 0x1 != czV['nametagStyle'] && cAb['fillText'](czQ, -czY / 0x2, 0x0), cAb['font'] = '20px GameFont', cAb['globalAlpha'] = 0x1, cAb['fillText'](czO, -czY / 0x2 + czT, 0x0), cAb['globalAlpha'] = 0x0 <= czR['verClans']['indexOf'](czW['clan']) ? 0x1 : 0.4, cAb['fillStyle'] = 0x0 <= czR['verClans']['indexOf'](czW['clan']) ? czS['verified']['clan'] : 'white', czP && cAb['fillText'](czP, -czY / 0x2 + czT + czU, 0x0);
+      }
+      cAb['restore']();
+    }
+    ...
+#+END_SRC
+
+Not the most readable snippet, but there are a few things that stand out to me.
+Namely, iterating over the =players= list and rendering something using the =health=
+attribute. Those four =if= statements seem to be checking if the player is visible
+(given away by the =czQ['frustum']['containsPoint'](cAI)=), so what if we just
+patch out the =continue='s?
+
+#+BEGIN_SRC javascript
+code = code.replace(/if\(\!\(czW=czP\['players'].*cAI\)\)\)continue;/, function(match, p1, offset, string) {
+  return "try{" + match.replace(/continue/g, "true") + "}catch(e){continue;}";
+});
+#+END_SRC
+
+I pulled a professional programmer move and wrapped everything in a =try=, =catch=
+block because the game would freeze up without it, but this works pretty well.
+
+#+BEGIN_EXPORT html
+<iframe width="560" height="315" sandbox="allow-same-origin allow-scripts" src="https://toobnix.org/videos/embed/b1b1b1cb-7644-4551-87d0-84723792a179" frameborder="0" allowfullscreen="1"></iframe>
+#+END_EXPORT
+
+And, hey! We have a wallhack! This probably isn't representative of /all/ browser
+games -- I'd expect most to be easier to screw with -- but I thought that the
+obfuscation and anti-cheat measures here made for a worthy opponent. It doesn't
+stack up against [[https://vmcall.blog/battleye-stack-walking/][BattlEye]], but this did take me more than an afternoon to figure
+out. To that effect, nice work, Sidney!
+
+#+BEGIN_EXPORT html
+<blockquote class="twitter-tweet" data-lang="en"><p lang="en" dir="ltr">New Rotation map and Anti Cheat tomorrow bois</p>&mdash; Sidney (@Sidney_de_Vries) <a href="https://twitter.com/Sidney_de_Vries/status/1190593818233425920?ref_src=twsrc%5Etfw">November 2, 2019</a></blockquote>
+<script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+#+END_EXPORT
+
+... 
+
+Even if your new "Anti Cheat" was this :)
+
+#+BEGIN_EXPORT html
+<div class="mastodon">
+    <iframe height="180" src="https://mastodon.sdf.org/@jakob/103442557410442316/embed"></iframe>
+</div>
+#+END_EXPORT
+
+-----
+
+I'm inevitably going to get flack for cheating in a video game. Before you write
+me an email, understand that I really don't care. I have a lot more fun reverse
+engineering games and writing cheats for them than I do playing them. If it
+makes you feel any better, the only time these cheats see any use is when I'm
+demonstrating them. Peace out.
+
+[fn:1] I didn't notice the request for '/textures/recticle.png' until I was editing this. Sheesh, that's an unfortunate typo.
+[fn:2] Given that the author is a self-proclaimed "JavaScript and NodeJS developer", I'm not particularly surprised by the embarrassingly childish name. Go ahead, bud. Put that on your CV.
+[fn:4] Identifiers like ='VuFlFKJOHFGfinUeccOKbaQQPyhjvfYD'= are pretty common in the code. I suspect these are the high-stakes variables that people like me would be grepping for.
+
+# ** Matchmaking
+
+# GET https://matchmaker.krunker.io/generate-token
+# referer/origin: https://krunker.io
+
+# > Response with 
+# {
+#     "input": "[TOKEN]"
+# }
+
+
+# GET https://matchmaker.krunker.io/ping-list?hostname=krunker.io
+# referer/origin: https://krunker.io
+
+# > Response with 
+# {
+#     "[server-name]": "[address]"
+# }
+
+# GET https://matchmaker.krunker.io/seek-game
+# referer/origin: https://krunker.io
+# GET PARAMS: hostname=krunker.io, region=[REGION], autoChangeGame=false, validationToken=[TOKEN], dataQuery={"v":"Q43rG"]}
+
+# > Response with 
+# {
+#     "changeReason": null,
+#     "clientID": "feb0c9f1-128a-4993-a381-bbf7a56318da",
+#     "gameId": "NY:dvn7x",
+#     "host": "[address]",
+#     "port": "[port]"
+# }
+
+# GET https://matchmaker.krunker.io/game-info?game=[id]
+# referer/origin: https://krunker.io
+
+# > Response with info about the game.

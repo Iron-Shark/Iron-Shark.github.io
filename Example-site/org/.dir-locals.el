@@ -1,0 +1,7 @@
+((org-mode . ((org-html-doctype . "xhtml5")
+              (org-html-html5-fancy . t)
+              (org-html-with-latex . 'verbatim)
+              (org-export-with-toc . nil)
+              (org-export-with-section-numbers . nil)
+              (org-export-with-sub-superscripts . nil)
+              (ox-haunt-base-dir . "/home/jakob/Blog/haunt/"))))

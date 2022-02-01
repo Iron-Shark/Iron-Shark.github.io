@@ -1,0 +1,193 @@
+#+TITLE: Reverse Engineering By Hand
+#+DATE: <2018-03-01 Thu 19:00>
+#+TAGS: tutorial, reverse-engineering, x86, c, linux
+
+My capture-the-flag team played in the Insomni'hack teaser this year. During the
+competition, I worked on a single challenge titled "sapeloshop." It was labeled
+as "Medium-Hard," and it was in the binary exploitation category. The source
+code for the server wasn't provided, so reverse engineering was necessary. I
+don't think that having to reverse the binary was supposed to be the hard part,
+as most of the behavior could have been inferred through some high-level
+analysis, yet I spent nearly five hours fruitlessly trying to reverse it, and
+the subsequent burnout was bad enough that I went home early. This wasn't the
+first time a reversing task had gotten the best of me; there had been a few
+competitions last year where I felt a similar loss in motivation. Noticing this
+recurring pattern frustrated me, and that frustration drove me to think about
+ways to improve myself as a reverse engineer.
+
+My initial idea was to work on expanding my skill set, but with some further
+reflection, I came to the realization that the weakness was my process. I was
+going at the task of reverse engineering without a plan: beginning by opening
+the binary in radare, propagating from the entrypoint, and renaming a few
+variables as I went along. I was trying to make sense of the program by
+passively reading the disassembly listing. This /might/ work for someone who
+lives and breathes assembly, but that certainly doesn't apply to me. What I
+needed was a way to engage with the binary at hand beyond trying to passively
+absorb it.
+
+With that, my first step was to come up with a more formally-defined idea of
+what's involved in "reverse engineering." I still don't think I have anything
+close to a complete description, but pondering on how reverse engineering tools
+are designed certainly helped to solidify my existing understanding. Namely, I
+was reminded of software suites advertised as "decompilers." They serve as a
+stepping stone in an *iterative* process of turning machine code into something
+that would be easier for a human to understand. They give an obviously
+machine-generated C/C++ representation of the machine code, and the reverse
+engineer continues by filling in the blanks with semantics.
+
+Now, I have a few issues with the idea of automated decompilation. For one, the
+tooling simply isn't accessible. The only working decompiler I've used, IDA Pro,
+is ridiculously expensive. Also, when I say, "working," I mean that it doesn't
+segfault upon opening the binary. Even IDA Pro doesn't work perfectly in every
+situation - especially those in which the binary has been intentionally
+obfuscated. Because of this, there are arguments against the use of decompilers:
+notably, [[https://blog.ret2.io/2017/11/16/dangers-of-the-decompiler/][this article]].
+
+But the goal wasn't to have a program to do the work for us anyway, it was to
+come up with a more effective methodology for reverse engineering a binary.
+Unlike software, human reversers can adapt to the situation at hand - they don't
+need rules defined in the same way that a computer would. As such, I've come up
+with a protocol in a similar vein to [[https://en.wikipedia.org/wiki/SQ3R][SQ3R]] for reverse engineering machine code
+to higher-level constructs. The protocol is still in its infancy, and I have
+hopes to expand upon it in the future, but I have found it to still be quite
+useful in its current state.
+
+I'd consider subroutines to be the fundamental atoms of a binary, and that's
+what this protocol focuses on. However, being able to understand the subroutines
+that compose a program doesn't necessarily imply an understanding of the whole
+program. These are things that I hope to incorporate into the protocol in the
+future, but for now, they are given as a handful of necessary precursors.
+
+For one, you should get a high-level understanding of what the program does. I
+would recommend initially treating it as a black box: What does this program do?
+Is it a web server? A crypto algorithm? I find that it's useful to copy down any
+text that the program outputs, as you can use the string references later on
+when you look at the machine code. You should also test plenty of inputs. What
+does the program do for typical edge cases? What error handling does it do? This
+might all seem extremely mundane, but if you understand the program at this
+level, it gives you things to recognize in the disassembly listing. This is
+absolutely essential when it comes to something more complicated than the toy
+programs you might see in a capture-the-flag. I've been working a lot with the
+Team Fortress 2 binaries recently, and understanding how and where certain
+string references are used has given me a way to find just the functionality I'm
+interested in, as opposed to trying to understand the entire 33 MB shared
+object.
+
+That brings me to another point: you might not even need to reverse all of the
+subroutines in the binary. In a binary exploitation challenge, it might make
+sense to audit the seemingly mundane input-handling functions, but if you can
+tell from the usage alone that all a subroutine does is print something, it
+probably isn't worth your time to disassemble it. Remember, you can always come
+back to something later, but if you waste your time on it, those are valuable
+competition minutes that you'll never get back.
+
+Finally, this is more general, and it's something that I think every reverse
+engineer knows, but it's worth mentioning regardless. If you don't know the ISA,
+the architecture's calling conventions, or the quirks of the language design and
+the compiler, it might be in your best interest to create a "lexicon" of
+high-level constructs and how they're represented in assembly. There's
+absolutely no shame in doing this, and it's been especially helpful for me when
+I've looked at any binaries that were compiled with MSVC. One tool that I've
+found useful for creating these lexicons is the [[https://godbolt.org/][Godbolt Compiler Explorer]].
+
+Hopefully that wasn't too long of an introduction. Now we can get into the
+protocol itself. It's composed of five steps and make up a mnemonic: "SCARS."
+The first step is to "skim," or "scan." The premise is to first get an idea
+which memory addresses the subroutine spans, or how long it is. I usually look
+for the typical "function epilogue," which might include a stack canary check,
+or it might just be a =pop %rbp; ret.= Then, get context. See where the
+subroutine is called and how it's called - figure out if there are any arguments
+to the subroutine, and see if it returns anything. Finally, look over the
+disassembly listing for the routine, paying attention to the use of stack
+variables and global variables. Do any of those variables look like they might
+be classes/structures?
+
+The second step is to "chunk." The first step should have given you a rough idea
+of the control flow, but now you need to break the subroutine into smaller sets
+of instructions that you can analyze. I usually separate based on whether or not
+a set of instructions are skipped by a conditional jump.
+
+The third step is "arrange." Simply put, this involves taking your findings
+about stack variables and such from the first step, and converting them to
+declarations in the high-level language. I also like to make stubs for any other
+subroutines that are called, since I'll probably be reversing those later
+anyway. This third step also ties in with the fourth step, which is to
+"recognize." This involves looking back on your lexicon of patterns, and
+converting them to the high-level constructs that they represent. These two
+steps are done simultaneously and are basically where you try to manually
+decompile the chunks of machine code you plotted out in the previous step.
+
+The final step is to "simplify," which entails simplifying the resultant code
+into something perhaps more understandable. For example, =1 << 4= is equivalent
+to =1 * 2^4=, or just =4=. This also might be where you replace magic numbers
+with constants. Whenever I see 0 passed to =read(3)=, I replace that with
+=STDIN_FILENO=.
+
+I spent a little under twenty minutes last night reversing the binary from the
+challenge I mentioned at the beginning of this post. That's not a lot of time
+compared to how much I spent during the competition, and I got surprisingly far
+(almost all of main!) If this were the competition, however, I would have done
+it differently. Instead of starting at main, I would have probably started at
+one of the functions for handling input and went backwards by checking for
+XREF's. I only did it this way to test out the protocol for something I had
+difficulty with in the past. Here are a few of the highlights. If you want to
+look on with me, all of the files for the challenge can be found [[https://github.com/DhavalKapil/ctf-writeups/tree/master/insomni-hack-18/sapeloshop][here]].
+
+The most useful part about rewriting the program in C is the malleability of
+text. When I was obtusely reading disassembly listings, keeping track of how
+values were being juggled across registers was difficult for me. But by
+representing these instructions in C, I can convert a few of them into an
+expression, comment which register they're in, and come back to use that
+expression later. This is more useful when the juggling spans a large number of
+instructions, but here's a smaller example where I still used it. The
+disassembly at =0x1e15= is
+
+#+BEGIN_SRC asm
+0x00001e15      488d8550b7ff.  leaq -0x48b0(%rbp), %rax
+0x00001e1c      488d90080400.  leaq 0x408(%rax), %rdx
+0x00001e23      488b8540b7ff.  movq -0x48c0(%rbp), %rax
+0x00001e2a      488d35bf0800.  leaq str.User_Agent:__128, %rsi    ; 0x26f0 ; "User-Agent: %128[^\r\n]\r\n"
+0x00001e31      4889c7         movq %rax, %rdi
+0x00001e34      b800000000     movl $0, %eax
+#+END_SRC
+
+I had previously made a variable for =-0x48b0(%rbp)= during my "arrange" step,
+temporarily named =local_48b0= until I figured out its usage and a better name
+for it. Just from these six instructions, I can tell that it's a buffer of some
+sort, so I started off with:
+
+#+BEGIN_SRC c
+((void *) local_48b0); // rax
+#+END_SRC
+
+Then, I handled the pointer arithmetic in the second instruction, and the third
+instruction, since it replaced the value in =%rax=:
+
+#+BEGIN_SRC c
+(void *) (((char *) (local_48b0)) + 0x408); // rdx
+*((uint64_t *) local_48b0); // rax
+#+END_SRC
+
+Ew. It's starting to look like some system programmer's personal Lisp dialect
+now. Don't worry. It's gross now, but as you understand more of the subroutine,
+you'll be able to declare variables in such a way that you won't need casts like
+these. That's where the "simplify" step comes into play.
+
+Also, I should mention that you don't necessarily have to reverse the chunks you
+came up with in a linear fashion. I saw a chunk with two calls to some
+=__errno_location=, which I didn't want to deal with at the time, so I just went
+on to the next chunk. Again, you can come back to stuff later, but this does
+mean you need to keep track of which chunks you've covered.
+
+One thing I've done in the past with this protocol is to keep a little ASCII
+drawing of the stack layout. It doesn't make a whole lot of sense here, since
+there aren't any pushes or pops that would change the size of the stack frame,
+but maybe you'll find it useful for 32-bit binaries.
+
+Oh, and one last thing. Not everything is worth adding into your decompilation.
+For example, if I saw a timer being set up with =alarm(3)=, I would probably
+ignore it. In fact, I'd patch it out, but that's a topic for another day.
+
+Any questions about things I mentioned in this post, or suggestions on how to
+make it better? Both would be greatly appreciated. Contact info is on my
+[[http://jakob.space][homepage]].

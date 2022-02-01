@@ -1,0 +1,445 @@
+#+TITLE: First Impressions of the Rust Programming Language
+#+DATE: <2018-06-08 Fri 13:02>
+#+TAGS: opinion, programming, rust
+
+C is almost 50 years old, and C++ is almost 40 years old. While age is usually
+indicative of mature implementations with decades of optimization under their
+belts, it also means that the language's feature set is mostly devoid of modern
+advancements in programming language design. For that reason, you see a great
+deal of encouragement nowadays to move to newer languages - they're designed
+with contemporary platforms in mind, rather than working within the limitations
+of platforms like the PDP-11. Among said "new languages" are Zig, Myrddin, Go,
+Nim, D, Rust... even languages like Java and Elixir that run on a virtual
+machine are occasionally suggested as alternatives to the AOT-compiled C and
+C++.
+
+I have plans to look into the characteristics that distinguish each and every
+one of these new programming languages, learning them and documenting my first
+impressions in the form of blog posts. This post is the beginning of that
+adventure: my first impressions of Rust. I chose to evaluate Rust first rather
+than one of the other aforementioned contenders for a few reasons. For one, it's
+backed by some big names like Mozilla, so I'm expecting it to have more polished
+documentation than its independently developed counterparts - we might as well
+step off with a language that I can learn without needing to read the compiler's
+source code. Also, I've been fairly critical of Rust in the past because that
+view was in-line with the opinions of my friends, but now that I've decided to
+go out of my way to learn a new programming language, I might as well use this
+as an opportunity to see if my criticisms were unfounded.
+
+Learning these new programming languages is certainly going to be an
+undertaking. Because Python and C were the first languages I was introduced to,
+I was able to simply buckle down, learn them, and apply them to pretty much
+everything I was doing at the time. When I tried to learn other languages later
+on, though, I had a hard time gauging whether or not I was making progress. I
+think that this is because I wasn't engaged with what I was learning; I was, at
+most, writing trivial programs with the language I was learning, and defaulting
+to C or Python whenever I needed to work on a "real" project. My goal is to
+learn these new languages to the extent that I can meaningfully evaluate them,
+so I've looked back on my past attempts and come to the conclusion that I either
+need to use them to develop something nontrivial, or make contributions to a
+free software project written in the language, as suggested by [[https://hackernoon.com/unconventional-way-of-learning-a-new-programming-language-e4d1f600342c][several]] [[https://codewithoutrules.com/2017/09/09/learn-a-new-programming-language/][articles]].
+In the case of this post, it will be the former, as I've actually come to like
+Rust enough to use it for my [[https://github.com/TsarFox/rebuild][reimplementation of Ken Silverman's BUILD engine]].
+
+With my introduction for this series out of the way, we can get into my first
+impressions of Rust. The first step was diving into the documentation to learn
+it, so I guess it would make sense to begin with that. Simply put, there is no
+shortage of high-quality learning material for Rust. [[https://doc.rust-lang.org/book/second-edition/index.html]["The Rust Programming
+Language,"]] the equivalent of TCPL for Rust, is surprisingly well-written. Even
+if you're familiar with a systems programming language like C, I would still
+recommend reading it cover-to-cover. I had initially started off with the "Rust
+for C++ Programmers" and the "Learn X in Y Minutes" tutorial for Rust, but until
+I read TRPL, there was a lot that didn't make sense, and I was completely lost
+when it came to using the standard library. The book is friendly, encouraging,
+and full of great examples that outline common patterns in the standard library
+and various third party crates. My only real complaint with TRPL is that some of
+the the analogies step foot into the territory of [[https://www.hillelwayne.com/post/monad-tutorials/][monad tutorials]]. Some
+exceptional examples are comparing a [[https://doc.rust-lang.org/book/second-edition/ch15-04-rc.html][reference-counting pointer to the TV in a
+family room]], or comparing [[https://doc.rust-lang.org/book/second-edition/ch04-01-what-is-ownership.html][references to tables at a restaurant]]. They aren't all
+bad, and there are a few that I actually really enjoy, like the comparison of
+[[https://doc.rust-lang.org/book/second-edition/ch16-02-message-passing.html][message passing concurrency to a river]], but most of them try too hard to relate
+the concept to something in the real world that it ends up being unhelpful.
+Fortunately, the book is on GitHub and accepts pull requests, so I have plans to
+send in suggestions for some alternatives.
+
+Despite the presence of great documentation, I predict that most people are
+still going to have a hard time learning Rust. It brings some concepts that you
+probably haven't seen before. As far as I'm aware, this is the first programming
+language to offer compile-time memory management. (C++ has smart pointers which
+are definitely similar, but those rules are enforced at runtime. Rust tightly
+integrates its concepts of ownership and lifetimes into the compiler.) TRPL does
+a good job of introducing the concepts for compile-time memory management, but I
+feel that that it only really scratches the surface. For that reason, I'd like
+to point anyone learning Rust to a great supplementary resource on the
+memory-model: [[http://cglab.ca/~abeinges/blah/too-many-lists/book/]["Learning Rust With Entirely Too Many Linked Lists"]]. It's
+hands-on, and just about as approachable as TRPL. [[http://softwaremaniacs.org/blog/2016/02/12/ownership-borrowing-hard/en/][This post]] might also help if
+you're having trouble grasping the general concept.
+
+That brings me to another point - the features that Rust brings to the table
+might be difficult to learn, but learning to use them pays off in the end.
+Compile-time memory management requires designing your programs in a way you
+might not be used to, but it definitely beats manual memory management, or
+letting a runtime take care of garbage collection.
+
+C's memory model, for example, is manually managed. Heap allocations are
+performed via =malloc(3)= and =calloc(3)=, and those allocations exist until
+=free(3)= is called. Take this trivial piece of code for making a heap
+allocation containing a string:
+
+#+BEGIN_SRC c :hl_lines 0
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+    char *buf;
+
+    // Make a heap allocation of 14 bytes.
+    buf = calloc(14, 1);
+
+    // calloc(3) CAN return a null pointer.
+    if (buf == NULL) {
+        return 1;
+    }
+
+    // Fill the allocated buffer with a string, and print it.
+    strcpy(buf, "Hello, world!");
+    puts(buf);
+
+    // Free the heap allocation, since we're done with it.
+    // This won't always be at the end of the function, but it usually will be.
+    free(buf);
+
+    return 0;
+}
+#+END_SRC
+
+This model requires keeping track of the allocations you make and ensuring that
+they're freed when they aren't needed anymore - we easily could've forgotten
+that call to =free(3)=. In this really trivial example, it doesn't matter
+because the process exits and the operating system reclaims the heap page, but
+if the program kept running after printing that string, we'd be dealing with a
+memory leak. Anyway, C's manual memory management is explicit enough that you
+can more or less predict what this will compile down to. GCC 6.4.0 emits
+following amd64 code:
+
+#+BEGIN_SRC asm :hl_lines 0
+              # Prelude.
+55             pushq %rbp
+4889e5         movq %rsp, %rbp
+4883ec20       subq $0x20, %rsp
+897dec         movl %edi, -0x14(%rbp)
+488975e0       movq %rsi, -0x20(%rbp)
+
+              # calloc(14, 1), store pointer on the stack.
+be01000000     movl $1, %esi
+bf0e000000     movl $0xe, %edi
+e892feffff     callq sym.imp.calloc
+488945f8       movq %rax, -8(%rbp)
+
+              # Check for null pointer.
+48837df800     cmpq $0, -8(%rbp)
+7507           jne 0x750
+b801000000     movl $1, %eax
+eb3b           jmp 0x78b
+
+              # (Really optimized) call to strcpy.
+488b45f8       movq -8(%rbp), %rax
+48ba48656c6c.  movabsq $0x77202c6f6c6c6548, %rdx
+488910         movq %rdx, 0(%rax)
+c740086f726c.  movl $0x646c726f, 8(%rax)
+66c7400c2100   movw $0x21, 0xc(%rax)
+
+              # puts(buf)
+488b45f8       movq -8(%rbp), %rax
+4889c7         movq %rax, %rdi
+e846feffff     callq sym.imp.puts
+
+              # free(buf)
+488b45f8       movq -8(%rbp), %rax
+4889c7         movq %rax, %rdi
+e82afeffff     callq sym.imp.free
+
+              # Teardown.
+b800000000     movl $0, %eax
+c9             leave
+c3             retq
+0f1f00         nopl 0(%rax)
+#+END_SRC
+
+The equivalent in Rust is similar, but as you'll see, we don't need to
+explicitly free the heap allocation.
+
+#+BEGIN_SRC rust :hl_lines 0
+use std::io;
+use std::io::Write;
+
+fn main() {
+    let buf = Box::new(b"Hello, world!\n");
+    io::stdout().write(*buf);
+}
+#+END_SRC
+
+rustc 1.25 compiles this down into the following amd64 code[fn:1]:
+
+#+BEGIN_SRC asm :hl_lines 0
+              # Prelude.
+4883ec48       subq $0x48, %rsp
+
+              # Heap allocation, made by the 'std::boxed::Box' smart pointer.
+b808000000     movl $8, %eax
+89c1           movl %eax, %ecx
+4889cf         movq %rcx, %rdi
+4889ce         movq %rcx, %rsi
+e8caedffff     callq sym.alloc::heap::exchange_malloc::h42fa40019bea1ed3
+
+              # We actually end up storing a reference to the bytestring, rather than copying the individual bytes into the box.
+              # Regardless, I think this should still illustrate heap allocation fairly well, and I'm trying to keep the example somewhat simple so we'll roll with it.
+488d0de3e705.  leaq str.Hello__world, %rcx
+4889c6         movq %rax, %rsi
+488908         movq %rcx, 0(%rax)
+4889742410     movq %rsi, 0x10(%rsp)
+
+              # Get the handle to stdout.
+e855590000     callq sym.std::io::stdio::stdout::h537f6f9874379378
+4889442408     movq %rax, 8(%rsp)
+488b442408     movq 8(%rsp), %rax
+4889442430     movq %rax, 0x30(%rsp)
+
+              # stdout.write(*buf);
+488b4c2410     movq 0x10(%rsp), %rcx
+488b11         movq 0(%rcx), %rdx
+be0e000000     movl $0xe, %esi
+89f1           movl %esi, %ecx
+488d7c2418     leaq 0x18(%rsp), %rdi
+488d742430     leaq 0x30(%rsp), %rsi
+e8965a0000     callq sym._std::io::stdio::Stdout_as_std::io::Write_::write::h12094683b11bc5a8
+
+              # Free the 'std::io::Result' that's returned by 'write'.
+              # We didn't check its, which is considered bad form, but this is just a simple example.
+488d7c2418     leaq 0x18(%rsp), %rdi
+e8fef4ffff     callq sym.core::ptr::drop_in_place::h72bdea260ebb17c9
+
+              # Free the stdout handle.
+488d7c2430     leaq 0x30(%rsp), %rdi
+e8a6f4ffff     callq sym.core::ptr::drop_in_place::h55479d5b85e18c56
+
+              # Finally, free the heap allocation we made.
+488d7c2410     leaq 0x10(%rsp), %rdi
+e8faf5ffff     callq sym.core::ptr::drop_in_place::ha5ac9a364139ad29
+
+              # Teardown.
+4883c448       addq $0x48, %rsp
+c3             retq
+#+END_SRC
+
+Besides needing to allocate a handle to interact with stdout, rustc's emitted
+assembly does pretty much the same thing as that of GCC - allocate a buffer,
+fill it, then free it when we're done using it. Rust just façades this process
+with a friendlier abstraction.
+
+Another feature I've come to really enjoy is that there are no more NULL
+pointers - they've been replaced by a strict type system à la Haskell. In the C
+example above, we saw that =calloc(3)= can return =NULL= if glibc isn't able to
+allocate enough memory. We easily could've forgotten to put in the check to make
+sure the it isn't =NULL=, in which case we would get a segmentation fault.
+Preventing this sort of thing is what people are talking about when they say
+"memory safety." For a segmentation fault, the operating system has to jump in
+because we're doing something we shouldn't - dereferencing a =NULL= pointer.
+There are plenty of other naughty things we can do in C, like freeing a heap
+allocation twice, or even worse, writing outside the bounds of a buffer. Rust
+aims to have the compiler step in when we do something dumb, rather than leaving
+that to the operating system or exploit mitigation systems. To do this for
+=NULL=-able references, Rust provides an =Option= type (and the =Result= type)
+that can represent either something or nothing. You see it used extensively in
+the standard library. Consider the =find= method of =std::string::String=, a
+method for finding the index of a substring in a string. There's the possibility
+that the substring exists in the string, in which case we'd just return that
+index, but what if it doesn't exist? In the case of C, we might return some
+silly value like '-1', but in Rust, we return an =Option<usize>= - either some
+=usize= value, or nothing. And the compiler makes sure we understand the
+implications of this.
+
+#+BEGIN_SRC rust :hl_lines 0
+fn main() {
+    let to_search = String::from("I may contain foo.");
+    let index = to_search.find("foo");
+    println!("index - 5: {}", index - 5);
+}
+#+END_SRC
+
+This is a pretty inane example, but please bear with me. If we try to compile
+this, rustc errors out, because we're trying to treat a variable that might
+represent nothing as if it were guaranteed to be something.
+
+#+BEGIN_SRC
+error[E0369]: binary operation `-` cannot be applied to type `std::option::Option<usize>`
+ --> test.rs:4:31
+   |
+ 4 |     println!("index - 5: {}", index - 5);
+   |                               ^^^^^^^^^
+   |
+   = note: an implementation of `std::ops::Sub` might be missing for `std::option::Option<usize>`
+#+END_SRC
+
+This would be fixed by inspecting the Option, ensuring that it *is* something,
+rather than nothing. It's an algebraic data type, so we can destructure it and
+work with the index if =find= returned something.
+
+#+BEGIN_SRC rust :hl_lines 0 
+fn main() {
+    let to_search = String::from("I may contain foo.");
+    if let Some(index) = to_search.find("foo") {
+        println!("index - 5: {}", index - 5);
+    }
+}
+#+END_SRC
+
+=if let= is a syntax construct that I don't think any other language has, so I
+should probably give a brief explanation. That =if= block will run if and only
+if =find= returned an instance of =Option= that was =Some=, rather than =None=.
+If an instance of =Some= is returned, it contains our index, so we can
+destructure it and set that value to the variable, =index=, which we go on to
+use.
+
+You might expect this strictness to bring frustration, but the compiler emits
+errors worded simply enough that a layman could understand them, and often makes
+suggestions for fixing the code in question. The above isn't a great example,
+here's a better one:
+
+#+BEGIN_SRC rust :hl_lines 0
+fn tabulate_slice(slice: &[u8]) {
+    for elem in slice.iter() {
+        println!("{}", elem);
+    }
+}
+
+fn main() {
+    let vec = vec![1, 2, 3];
+    tabulate_slice(vec);
+}
+#+END_SRC
+
+#+BEGIN_SRC
+error[E0308]: mismatched types
+ --> test.rs:9:20
+   |
+ 9 |     tabulate_slice(vec);
+   |                    ^^^
+   |                    |
+   |                    expected &[u8], found struct `std::vec::Vec`
+   |                    help: consider borrowing here: `&vec`
+#+END_SRC
+
+Rust has a great deal of functionality that makes it feel like your typical
+high-level Ruby or Python, despite being a compiled language. And it isn't
+limited to what I described above - here are a few of the other features I
+was really impressed with:
+
+* Conditionals are Expressions
+
+#+BEGIN_SRC rust :hl_lines 0
+let var = if true {
+    1
+} else {
+    2
+};
+#+END_SRC
+
+* No parentheses for the expression part of if/while/for
+
+Heh, I bet you've seen enough of that already.
+
+* Semantics for Infinite Loops
+
+#+BEGIN_SRC rust :hl_lines 0
+loop {
+    break;
+}
+#+END_SRC
+
+* Semantics for Unused Variables/Parameters
+
+#+BEGIN_SRC rust :hl_lines 0
+for _ in 0..5 {
+    println!("I'm printed 5 times!");
+}
+#+END_SRC
+
+* Range Notation, Type Inference, and Iterators
+
+Again, you've seen these already.
+
+* Tuples, Destructuring, and Pattern Matching via =match= and =if let= Expressions
+
+#+BEGIN_SRC rust :hl_lines 0
+match to_search.find("foo") {
+    Some(index) => println!("Foo at {}", index),
+    None => println!("No foo :("),
+}
+
+// Or, more idiomatically:
+
+if let Some(index) = to_search.find("foo") {
+    println!("Foo at {}", index);
+} else {
+    println!("No foo :(");
+}
+#+END_SRC
+
+* Automated Testing is Integrated Into the Build System
+
+#+BEGIN_SRC rust :hl_lines 0
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
+}
+#+END_SRC
+
+This will be run upon invocation of =cargo test=.
+
+* Isolation of Unsafe Code
+
+There's a set of [[https://doc.rust-lang.org/book/second-edition/ch19-01-unsafe-rust.html][rules]] to ensure that the implications of working with unsafe
+code are properly contained, but the gist of it is that unsafe code is isolated
+by the scoping system. Mostly, I'm glad that the language allows you to work
+with unsafe code at all.
+
+#+BEGIN_SRC rust :hl_lines 0
+fn main() {
+    unsafe {
+        asm!("INT3");
+    }
+}
+#+END_SRC
+
+---
+
+That's my opinion on the language design aspect, but the community and ecosystem
+are important as well. My experience with the Rust community is limited, but
+from what little I have seen, those in the community are friendly and rational.
+I submitted [[https://github.com/mattnenterprise/rust-imap/issues/67][a few issues to rust-imap]] and received prompt and helpful responses.
+I can also confidently say that the Rust ecosystem a pleasure to work with. It
+obviously isn't as mature as some other language ecosystems, but adding a
+"crate" dependency to your projects is as easy as adding a line to your
+'Cargo.toml'. It's equally easy to publish the code and documentation for crates
+you've made yourself. I threw together [[https://github.com/TsarFox/wildmidi][a library for interacting with WildMIDI]],
+and a [[https://docs.rs/][docs.rs]] page popped up without any intervention from me. Painless.
+
+The process of linking those crates into the executable is relatively primitive,
+and there are a few complaints in that respect. It's mostly static linking, so
+the argument is "you get outdated copies of several libraries on your computer."
+However, the benefits of dynamic linking as the alternative is a [[http://harmful.cat-v.org/software/dynamic-linking/][debate I don't
+want to get into in this post]]. Right now I'll leave it as, "it's not an option
+in the current implementation, and that's a disadvantage," even if I'm
+blissfully ignorant of the size of my Rust binaries and /might/ have some
+complaints about dynamic linking.
+
+All in all, I'm very happy with Rust. Maybe it isn't "there" yet as a viable
+replacement to C, but it's promising and I have a feeling that, with time, it
+will fit nicely into GNU/Linux ecosystem.
+
+[fn:1] A previous version of this post included *all* of the assembly emitted by the compiler, but in this revision, I've chosen to remove Rust's error/panic handling code because I believe that it actually detracts from the concept I'm trying to show.

@@ -1,0 +1,51 @@
+.org-preprocessor,
+.org-builtin {
+    color: #afd7d7;
+}
+
+.org-comment-delimiter,
+.org-comment {
+    color: #ff8700;
+}
+
+.org-constant {
+    color: #87ffd7;
+}
+
+.org-function-name {
+    color: #afd7ff;
+}
+
+.org-keyword {
+    color: #1fb6d3;
+}
+
+.org-negation-char {
+    color: #ff4b4b;
+}
+
+.org-regexp-grouping-backslash {
+    color: #ffd787;
+}
+
+.org-regexp-grouping-construct {
+    color: #d18aff;
+}
+
+.org-doc,
+.org-doc-string,
+.org-string {
+    color: #ffaf87;
+}
+
+.org-type {
+    color: #87ff87;
+}
+
+.org-variable-name {
+    color: #ffd787;
+}
+
+.org-warning {
+    color: #dd0000;
+}

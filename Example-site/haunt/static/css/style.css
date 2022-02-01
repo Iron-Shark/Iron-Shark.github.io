@@ -1,0 +1,390 @@
+html {
+    font-family: "Cantarell", sans-serif;
+}
+
+@media (max-width: 54em) {
+    html {
+        font-size: 14px;
+        line-height: 160%;
+    }
+}
+
+@media (max-width: 26em) {
+    html {
+        font-size: 12px;
+        line-height: 150%;
+    }
+}
+
+body {
+    max-width: 54rem;
+    margin: .5rem auto;
+    position: relative;
+}
+
+@media (max-width: 54em) {
+    body {
+        max-width: 100%;
+        padding: 0 1rem;
+    }
+}
+
+/* Top-level header. */
+
+body > header {
+    display: flex;
+    align-items: center;
+}
+
+@media screen and (max-width: 480px) {
+    body > header {
+        flex-direction: column;
+        flex-wrap: wrap;
+        justify-content: space-around;
+    }
+}
+
+body > header > a > img {
+    max-width: 4rem;
+}
+
+@media screen and (min-width: 480px) {
+    body > header > a {
+        padding-right: 1rem;
+    }
+}
+
+body > header > nav > ul {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+@media screen and (min-width: 480px) {
+    body > header > nav > ul > li {
+        display: inline-block;
+        padding: 1rem 2rem;
+        border-bottom: 2px solid #d2d6dd;
+        text-align: center;
+    }
+
+    body > header > nav > ul > li > a {
+        color: #000;
+        text-decoration: none;
+    }
+}
+
+/* Horizontal lists. */
+
+.horizontal-list {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-around;
+
+    list-style-type: none;
+    text-align: center;
+
+    margin: 0;
+    padding: 8px 0;
+}
+
+/* Pagination. */
+
+#pagination {
+    display: flex;
+    justify-content: space-around;
+}
+
+/* Tag clouds. */
+
+#tag-cloud a {
+    color: #000;
+}
+
+#tag-cloud li {
+    display: inline-block;
+    margin: 10px 5px;
+    padding: 5px 10px;
+    vertical-align: top;
+
+    text-align: center;
+
+    border-radius: 4px;
+    border-style: solid;
+    border-width: thin;
+}
+
+/* Links. */
+
+a:link, a:visited { color: #00E; text-decoration: none; }
+
+/* Figures */
+
+figure > img {
+    display: block;
+    max-width: 90%;
+    margin: auto;
+
+    border-radius: 2px;
+}
+
+figure > figcaption {
+    padding-top: 1rem;
+}
+
+/* Embeds. */
+
+.mastodon > iframe,
+.peertube > iframe {
+    display: block;
+    width: 90%;
+    min-height: 100%;
+    margin: auto;
+    border-radius: 4px;
+}
+
+/* Footnotes. */
+
+.footdef {
+    margin-bottom: 1rem;
+}
+
+.footdef > sup, .footpara {
+    display: inline;
+}
+
+/* Webmention. */
+
+#webmention {
+    border-top: 2px solid #d2d6dd;
+}
+
+ul#webmention-container {
+    list-style-type: none;
+}
+
+div.h-entry, ul#webmention-container li {
+    border: 2px solid #d2d6dd;
+    padding: 1rem;
+}
+
+img.u-photo {
+    width: 4rem;
+    padding: 0 1rem 1rem 0;
+    float: left;
+}
+
+div.p-author * {
+    padding-right: 1rem;
+}
+
+/* Webmention form. */
+
+form {
+    border-top: 2px solid #d2d6dd;
+    padding-top: 1rem;
+}
+
+form input {
+    margin-top: 1rem;
+}
+
+form input[type=url] {
+    display: block;
+    width: 100%;
+}
+
+/* Source code. */
+
+pre {
+    color: #f0e9dc;
+    font-family: "Hack", monospace;
+    font-size: 90%;
+
+    background-color: #303539;
+    border-radius: 4px;
+    padding: 1rem;
+    overflow-x: auto;
+}
+
+/* Footer. */
+
+body > footer {
+    margin-top: 1.2rem;
+    border-top: 2px solid #d2d6dd;
+}
+
+body > footer > div {
+    margin-top: 1rem;
+    display: flex;
+    align-items: center;
+}
+
+body > footer > div > p {
+    margin: 0;
+    padding-right: 1rem;
+}
+
+/* About page. */
+
+#site-map {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-gap: 1rem;
+
+    padding: 0 1rem;
+}
+
+#site-map > section {
+    text-align: center;
+}
+
+.overline {
+    border-top: 2px solid #d2d6dd;
+    margin-top: 0.5rem;
+}
+
+/* Tables. */
+
+table {
+    text-align: center;
+    width: 100%;
+}
+
+td {
+    padding: 0 1rem;
+}
+
+tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+/* Buttons. */
+
+button {
+    display: inline;
+    padding: .3em .6em .3em;
+    font-size: 75%;
+    font-weight: 700;
+    line-height: 1;
+    color: #fff;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: .25em;
+}
+
+.label-info {
+    background-color: #5bc0de;
+}
+
+.label-good {
+    background-color: #5cb85c;
+    border-color: #4cae4c;
+}
+
+.label-okay {
+    background-color: #ec971f;
+    border-color: #d58512;
+}
+
+.label-bad {
+    background-color: #dc3545;
+}
+
+/* Spoilered text. */
+
+.spoiler {
+    background-color: #2e3436;
+    color: #2e3436;
+}
+
+.spoiler:hover {
+    background-color: #f6f5f4;
+}
+
+/* Styles specific to the "about" page. */
+
+.project-section td:nth-child(1) {
+    width: 15%;
+}
+
+.project-section td:nth-child(2) {
+    width: 10%;
+}
+
+.project-section td:nth-child(3) {
+    width: 80px;
+}
+
+.project-section td:nth-child(4) {
+    width: 15%;
+}
+
+.team-timeline-section img {
+    max-width: 32px;
+}
+
+.team-timeline-section td:nth-child(1) {
+    width: 15%;
+}
+
+.team-timeline-section td:nth-child(2) {
+    width: 40px;
+}
+
+/* .team-timeline-section td:nth-child(3) { */
+/*     width: 20%; */
+/* } */
+
+.team-timeline-section td:nth-child(4) {
+    width: 15%;
+}
+
+.team-timeline-section td:nth-child(5) {
+    width: 15%;
+}
+
+.lang-c {
+    background-color: #555555;
+    color: #fff;
+}
+
+.lang-cpp {
+    background-color: #f34b7d;
+    color: #fff;
+}
+
+.lang-python {
+    background-color: #3572a5;
+    color: #ffdb4e;
+}
+
+.lang-rust {
+    background-color: #dea584;
+    color: #fff;
+}
+
+.lang-kotlin {
+    background-color: #f89917;
+    color: #fff;
+}
+
+.lang-fennel {
+    background-color: #2ca02c;
+    color: #fff;
+}
+
+.lang-elisp {
+    background-color: #c065db;
+    color: #fff;
+}
+
+.lang-scheme {
+    background-color: #1e4aec;
+    color: #fff;
+}
+
+.lang-ebuild {
+    background-color: #4d4270;
+    color: #fff;
+}

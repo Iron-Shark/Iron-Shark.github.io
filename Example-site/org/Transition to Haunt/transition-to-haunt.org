@@ -1,0 +1,70 @@
+#+TITLE: Transitioning to Haunt
+#+DATE: <2019-05-04 Sat>
+#+TAGS: writeup, programming, lisp, scheme, emacs, emacs-lisp
+
+Rather than study for finals this week, I spent my time moving this blog over to
+[[https://dthompson.us/projects/haunt.html][Haunt]]. Previously, I was using Hugo, and while [[https://ox-hugo.scripter.co/][ox-hugo]] made the authoring
+workflow tolerable, doing anything on the rendering side of things was unsavory
+at best. I eventually had enough and decided to look for another solution, of
+which Haunt was the most enticing.
+
+I should probably begin by thanking [[https://dthompson.us/][David Thompson]], not only for his work on
+Haunt, but also because he made the [[https://git.dthompson.us/blog.git][source code for his Haunt blog]] available.
+I'm sure our similar stylesheets is enough of a hint that I used his blog as a
+starting point. In hopes that it may be useful to someone else, I have also
+chosen to make my Haunt configuration and Org sources available [[https://git.sr.ht/~jakob/blog][here]].
+
+On the topic of Org sources, my chief concern with transitioning away from Hugo
+was the possibility of losing my ability to author posts in =org-mode=. After all,
+"Org" is not among the available readers in the upstream Haunt repository. I
+handled this by taking the same approach as =ox-hugo=: writing an Org Export
+backend. I call it [[https://git.sr.ht/~jakob/ox-haunt][ox-haunt]], and it really doesn't do much. It piggybacks on
+=ox-html= and Haunt's =html-reader=, filling in the metadata section according to
+whatever Org keywords it finds. I've also tried to keep it relatively
+unopinionated, leaving the output of =ox-html= generally unaltered -- if you don't
+like the gross old-school XHTML, set =org-html-doctype=. Do note, though, that
+=xml->sxml= can't read implicitly self-closing tags like =img=. So make sure you set
+it to ="xhtml5"= and not ="html5"=.
+
+If you do end up using =ox-haunt=, you'll need to use a slightly modified
+=html-reader= for versions <= 0.2.4:
+
+#+BEGIN_SRC scheme
+(define (read-html-post port)
+  (values (read-metadata-headers port)
+          (let loop ((ret '()))
+            (catch 'parser-error
+              (lambda ()
+                (match (xml->sxml port)
+                  (('*TOP* sxml) (loop (cons sxml ret)))))
+              (lambda (key . parameters)
+                (reverse ret))))))
+
+(define html-reader
+  (make-reader (make-file-extension-matcher "html")
+               (cut call-with-input-file <> read-html-post)))
+#+END_SRC
+
+The =html-reader= included in those versions can't read more than one top-level
+element. I've submitted a patch, but as of the time of writing this, it hasn't
+made its way into the upstream repository.
+
+Also, see that beautiful syntax highlighting? One of the benefits of using
+=ox-html= as a base was =htmlize=. I've even been able to tailor the colors to my
+Emacs theme.
+
+Oh, one last point. I've dropped the header images for my posts. I was using
+them in hopes of emulating the look of [[https://dolphin-emu.org/blog/][Dolphin Emulator's blog]] and [[https://aixxe.net/][aixxe]], but I
+really don't think I was able to do the technique justice.
+
+#+BEGIN_EXPORT html
+<div class="mastodon">
+    <iframe height="200" src="https://mastodon.social/@rocx/100964480434249864/embed"></iframe>
+</div>
+#+END_EXPORT
+
+Overall, I'm happy with that choice of static site generator. Compared with
+Hugo, Haunt is far simpler and easier to hack on. Honestly, who cares if I'm
+using the "world's fastest framework for building websites"? =haunt build= still
+finishes in under a second. And despite describing myself as a Common Lisp-er,
+I've been having a blast using Guile Scheme for this.

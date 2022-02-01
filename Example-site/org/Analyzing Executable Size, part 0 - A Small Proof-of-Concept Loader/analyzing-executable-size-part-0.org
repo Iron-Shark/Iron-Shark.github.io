@@ -1,0 +1,155 @@
+#+TITLE: Analyzing Executable Size, part 0 - A Small Proof-of-Concept Loader
+#+DATE: <2017-07-31 Mon 13:35>
+#+TAGS: writeup, programming, operating-systems, c, linux
+
+It seems that static linking is back in style, or at least popular among all the
+hip new programming languages of today. I don't have anything against statically
+linked binaries, nor do I have a problem with larger executables, but I've
+noticed that the acceptable size for an executable is a lot larger now than it
+was a few years ago; that is, the new kids on the block have significantly more
+leeway than their predecessors. For example - a C program that spits out "hello
+world" is 7 KB when statically linked to musl. It's 12 KB when dynamically
+linked to glibc. The same program in D, where the reference compiler doesn't
+allow dynamic linking to the standard library, is 896 KB. A blog post I read
+recently about certificate chain verification in Go made a point of praising the
+toolchain for being able to spit out a binary that was "less than 6 MB!" I'm
+being more facetious than with my D example, as this was statically linked to an
+SSL-capable web server, but 6 MB is a little over half the size of a
+[[https://en.wikipedia.org/wiki/Tiny_Core_Linux][fully-functioning operating system]]. I'm not so interested in why we settle
+binaries the size of a few videos, but instead I'd like to look at why they're
+that large to begin with. To peer in and see what wealth of information is
+stored inside, and how certain programming languages make use of that
+information.
+
+Perhaps we should first take a step back. What is a binary, anyway? It's a
+structured format, not much different than your typical PNG or Ogg file,
+containing some machine code instructions and directives for how the program
+should be loaded into memory. The task of parsing the binary and actually
+loading it is done by a *loader*, though that's a pretty broad term. My favorite
+book on this subject, /Linkers and Loaders/ by John R. Levine, defines a loader
+as a program to "copy a program from secondary storage (which since about 1968
+invariably means a disk) into main memory so it's ready to be run. In some cases
+loading just involves copying the data from disk to memory, in others it
+involves allocating storage, setting protection bits, or arranging for virtual
+memory to map virtual addresses to disk pages."
+
+Loaders are everywhere, as you can probably imagine. Maybe you've heard of a
+boot loader; those are for getting a kernel into memory from the strange and
+unfamiliar land of x86 real mode. Whenever you run a program on Linux, it's
+loaded by the kernel's ELF loader, of which you can find the source code for at
+[[https://github.com/torvalds/linux/blob/master/fs/binfmt_elf.c][=fs/binfmt_elf.c=]] of the kernel source tree. On a higher level, something like
+Java has a class loader for getting bytecode into memory so that the JVM can run
+it.
+
+As our first step into the world of loaders, we'll write our own. A very basic
+one, at that. I think that because we're taking a look at how much information
+can be stored inside of a binary, we should begin with the absolute minimum. It
+won't use a structured format, and won't set up memory beyond the stack and a
+page for executable code, but not at a specified address of any sort. Where that
+code exists in memory isn't known to the program, and it only really knows where
+the stack is from the =%rsp= register. We'll simply load some machine code from
+a file, and execute it. I'll spare you the per-line explanation I usually give,
+since it's reasonably simple and the only part you might not understand already
+is explained through comments.
+
+#+BEGIN_SRC c
+#include <sys/mman.h>
+#include <sys/stat.h>
+
+#include <stdio.h>
+
+
+size_t binary_size(FILE *);
+
+
+int main(int argc, char **argv) {
+    FILE    *fp;
+    void    *exe;
+    size_t   exe_size;
+    void   (*jump)(void);
+
+    if (argc != 2 || (fp = fopen(argv[1], "rb")) == NULL) {
+        fprintf(stderr, "USAGE: %s [FILE]\n", argv[0]);
+        return 1;
+    }
+
+    if ((exe_size = binary_size(fp)) == 0) {
+        return 1;
+    }
+
+    /* Because writable memory pages are marked as non-executable by
+       default, we need to map a new page of memory for our executable
+       code. We do this by invoking the "mmap" syscall, and getting a
+       new page from the kernel. */
+    exe = mmap(NULL, exe_size, PROT_WRITE | PROT_EXEC,
+               MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+    if (exe == MAP_FAILED) {
+        fprintf(stderr, "mmap failure.\n");
+        return 1;
+    }
+
+    fread(exe, exe_size, 1, fp);
+    jump = exe;
+    jump();
+
+    munmap(exe, exe_size);
+    fclose(fp);
+    return 0;
+}
+
+
+/* We'll use some POSIX standard functions because we can and they're
+   generally safer than fseek and ftell. */
+size_t binary_size(FILE *fp) {
+    struct stat buf;
+
+    if ((fstat(fileno(fp), &buf) != 0) || (!S_ISREG(buf.st_mode))) {
+        return 0;
+    }
+
+    return buf.st_size;
+}
+#+END_SRC
+
+Looks good! We can't use any of the binaries on our system to test it out,
+though. They're in some structured format like ELF and the header would be
+interpreted as code -- probably causing a segmentation fault. Even if it got
+past the header without a core dump, the binary probably relies on some absolute
+addressing that we didn't set up properly. So instead of running =/bin/ls=
+through our program, we'll assemble "hello world."
+
+#+BEGIN_SRC asm
+        leaq (%rip), %rax
+        addq $_msg_end - ., %rax
+        jmpq *%rax
+_msg:
+        .ascii "Hello, world!\n"
+_msg_end:
+        movq $0x01,     %rax
+        movq $0x01,     %rdi
+        leaq (%rip),    %rsi
+        subq $. - _msg, %rsi
+        movq $0x0e,     %rdx
+        syscall
+        ret
+#+END_SRC
+
+What you'll probably notice immediately is that we're forced to write a
+position-independent executable. As I mentioned earlier, our loader can't handle
+absolute addresses. It can't really handle anything, aside from the most simple
+of x86 instructions. We do a =ret= at the very end to return control to the
+loader. Nothing left to do now but test it out:
+
+#+BEGIN_SRC
+[jakob@Epsilon ~]$ ./a.out test.bin
+Hello, world!
+#+END_SRC
+
+=test.bin= is 64 bytes and takes 0.001s to load and run. I probably could have
+made the program smaller, but I think it's a perfectly fine benchmark as we
+continue through this series. Keep in mind that 64 bytes is only achievable
+because we forget the conveniences of modern loaders. We can only run
+position-independent code, there's no separation between data and code segments,
+no room for debugging symbols, no write protection on the code segment, nothing.
+This is perhaps the most stripped down loader you can get.

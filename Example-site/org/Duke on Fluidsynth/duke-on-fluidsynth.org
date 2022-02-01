@@ -1,0 +1,181 @@
+#+TITLE: Duke on Fluidsynth
+#+DATE: <2018-01-13 Sat 21:10>
+#+TAGS: writeup, programming, video-games, audio, c++
+
+My first experiences with Duke Nukem 3D were with EDuke32 ages ago. This was
+back when I was running Windows Vista, and while my memory is a bit lacking, I
+swear that I had working music then. Ever since I made the switch to Linux, I
+haven't had working music playback in EDuke. Frustrated at the fact that my past
+few years of Duke 3D have been devoid of all sound besides the screams of death
+and Duke's trash talking, I've finally decided to troubleshoot it.
+
+My first hypothesis was that there was a build flag for music support, and that
+the binaries for EDuke in my distribution's package repository were compiled
+without it. This led me to look at the [[http://wiki.eduke32.com/wiki/Building_EDuke32_on_Linux][Linux build instructions]], which
+specifically mention an =EDUKE32_MUSIC_CMD= environment variable for specifying
+an external MIDI player to use. This tipped me off on the issue: my version of
+EDuke couldn't play MIDI. This made sense, since all of the other game sounds
+were working just fine. I set the TiMidity++ command-line tool as the external
+MIDI player, as I've had luck using TiMidity++ with QZDoom, and it worked on the
+first try. This victory was short-lived, however, as the game froze the second I
+started up the first episode. I figured that EDuke was waiting on the TiMidity++
+process to die off, which is when I decided to crack open the source code.
+
+The code revealed that on Linux platforms, EDuke uses SDL2_Mixer for music
+output. I'm mildly familiar with it; it's a wrapper around the SDL audio module,
+providing loaders for several sound formats such as OGG and MIDI. Unfortunately,
+it seems incapable of playing MIDI on my system. Some further research revealed
+that for MIDI playback, SDL2_Mixer can use either FluidSynth, or an internal
+version of TiMidity. This reminded me of an issue I had when I first installed
+GZDoom on my machine: soundfonts.
+
+You're supposed to be able to specify a default soundfont for FluidSynth in
+=/etc/conf.d/fluidsynth=, but in my experiences with the command-line tool, this
+is ignored entirely. Similarly, a default soundfont can be specified in
+=/etc/timidity++/timidity.cfg=, but the only things I've used that have
+respected that are QZDoom and the TiMidity++ command-line tool. Compiling
+SDL2_Mixer from source and forcing it to use the internal version of TiMidity
+has the same issue as before.
+
+I suspect that the reason for this is the fragmentation of TiMidity releases.
+SDL2_Mixer has an internal version of TiMidity. So does QZDoom. It seems to be
+one of those libraries that just gets copied into version control because it's
+small enough, like that Vorbis decoder by RAD Game Tools. This has the
+consequence that it will almost never be updated, and you may have several
+programs using different, incompatible versions of it. In the case of QZDoom,
+the copyright header in =timidity.cpp= is dated 1995.
+
+I looked at [[http://libtimidity.sourceforge.net/][libTiMidity]] in hopes of debugging the issue, which is when I
+realized that some versions of TiMidity literally do not support specifying a
+default soundfont, which would explain why SDL2_Mixer is dead silent.
+
+#+CAPTION: This is a pretty overdue feature, guys.
+#+BEGIN_SRC c :hl_lines 0
+else if (!strcmp(w[0], "soundfont") ||
+         !strcmp(w[0], "font"))
+{
+  /* "soundfont" sf_file "remove"
+   * "soundfont sf_file ["order=" order] ["cutoff=" cutoff]
+   *                    ["reso=" reso] ["amp=" amp]
+   * "font" "exclude" bank preset keynote
+   * "font" "order" order bank preset keynote
+   */
+  DEBUG_MSG("FIXME: Implement \"%s\" in TiMidity config.\n", w[0]);
+}
+#+END_SRC
+
+Alright, so TiMidity isn't the way to go at all, and FluidSynth has issues
+specifying a default soundfont via configuration files, but perhaps the
+FluidSynth /API/ exposes a means of specifying a soundfont. Fortunately, this
+was easy to check as FluidSynth has the best documentation I've ever seen from a
+library written in C. The developer documentation is rich with examples, and one
+of them even involves what we're looking for. Loading a soundfont with
+FluidSynth turns out to be as easy as calling =fluid_synth_sfload=.
+
+Writing a drop-in replacement for the SDL2_Mixer MIDI driver is uncomplicated
+because Duke3D maintains a structured API for its music drivers. There are two
+drivers in the source tree, currently: the original Apogee Sound System
+implementation (=source/duke3d/src/music.cpp=), and the reimplementation using
+SDL2_Mixer (=source/duke3d/src/sdlmusic.cpp=). To make things simple, we'll just
+replace =sdlmusic.cpp= and define the following routines:
+
+- =const char *MUSIC_ErrorString(int32_t ErrorNumber)=
+- =int32_t MUSIC_Init(int32_t SoundCard, int32_t Address)=
+- =int32_t MUSIC_Shutdown(void)=
+- =void MUSIC_SetVolume(int32_t volume)=
+- =int32_t MUSIC_GetVolume(void)=
+- =void MUSIC_SetLoopFlag(int32_t loopflag)=
+- =void MUSIC_Continue(void)=
+- =void MUSIC_Pause(void)=
+- =int32_t MUSIC_StopSong(void)=
+- =int32_t MUSIC_PlaySong(char *song, int32_t loopflag)=
+- =int32_t MUSIC_InitMidi(int32_t card, midifuncs *Funcs, int32_t Address)=
+- =void MUSIC_Update(void)=
+
+The names are very descriptive in this case, and the routines themselves are
+quite simple. Routines that return an =int32_t= are just returning an error code
+(=MUSIC_Ok= or =MUSIC_Error=), with the exception of =MUSIC_GetVolume=, which
+returns the volume on a scale of 0 to 255. In our case, most of these will be
+stubs. For example, =MUSIC_Update= and =MUSIC_Continue= are irrelevant for
+FluidSynth.
+
+Also, it's worth mentioning that the "song" parameter to =MUSIC_PlaySong= isn't
+a filename, it's a pointer to an in-memory version of the MIDI file. FluidSynth
+supports reading MIDI files from memory, but unlike SDL2_Mixer's in-memory MIDI
+loader, the file's size has to be explicitly specified. I dug up a [[https://github.com/colxi/midi-parser-js/wiki/MIDI-File-Format-Specifications][specification
+of the format]] and hacked together a little routine to figure out the size. It
+isn't particularly important, but I wanted to mention it because it worked on
+the first try, which warranted some celebration.
+
+#+BEGIN_SRC c :hl_lines 0
+char *tracks;
+size_t file_size;
+uint16_t num_tracks;
+
+tracks = song + 0x14;
+num_tracks = *((uint16_t *) (song + 0x10));
+file_size = 0x14; // Size of the MIDI header.
+
+while (num_tracks--) {
+    uint16_t track_size;
+
+    if (!memcmp(tracks, "MTrk", 4)) {
+        break;
+    }
+
+    track_size = *((uint16_t *) (tracks + 0x04));
+    file_size += track_size + 0x08;
+    tracks += track_size + 0x08;
+}
+#+END_SRC
+
+This all ended up being simple enough that I was able to get MIDI playback
+working in under an hour on a Friday night. Yeah. I had some friends who wanted
+to go out that night, but I stayed home and wrote a MIDI driver instead. (That
+isn't the real reason, I'm not that much of a loser).
+
+Unfortunately, because I was just hacking it together quickly, the initial
+implementation had a few issues:
+
+- No error reporting (=MUSIC_ErrorString= just returns "Nothing to see here...")
+- Doesn't use modern C++, and only loosely follows the EDuke32 code style.
+- Directly includes the FluidSynth headers, which seems to be a taboo in the
+  EDuke codebase.
+- =MUSIC_StopSong will= shutdown and reinitialize the entire audio driver just
+  to flush whatever's currently playing out of the player.
+- Replaces =sdlmusic.cpp=, instead of being an independent source file that can
+  be included at compile time.
+- No volume controls.
+- Soundfont and audio backend are hardcoded to my system.
+
+The first three were quite easy to fix, and as I don't have any plans to push
+this upstream, they were really non-issues. The thing with =MUSIC_StopSong= is
+also kind of a non-issue, as reinitializing the audio system is the only way to
+flush the FluidSynth player right now. That fifth issue is also something I'm
+not going to deal with unless someone confronts me about getting this included
+upstream, because this is a lot easier to maintain as a drop-in replacement.
+
+Volume controls were extremely trivial to implement, as the only thing the
+driver has to do is expose MUSIC_SetVolume. The routine receives a number on the
+interval [0, 255], where 0 is the quietest, and 255 is the loudest. FluidSynth
+provides a 'synth.gain' setting, which is essentially volume, but it instead
+accepts numbers on the interval [0.0, 10.0].
+
+The naive approach (which is what I did the first time around) is to multiply
+the parameter by some scalar (10.0 / 255) to fit on the interval of [0.0,
+10.0]. This was quite painful for my poor little ears. So I instead scaled the
+number to fit on the interval of [0.0, 1.0].
+
+Finally, specifying the soundfont is something I'll address in the future. My
+patch adds some stuff to the EDuke options menu for specifying an audio backend
+(alsa, pulse, etc), but I have yet to figure out how to make an option that's
+stored as a string.
+
+If you want to check out my patchset, you can view the repository [[https://github.com/TsarFox/duke-on-fluidsynth][here]], and
+here's a demo video:
+
+#+BEGIN_EXPORT html
+<div class="peertube">
+  <iframe width="560" height="315" sandbox="allow-same-origin allow-scripts" src="https://pe.ertu.be/videos/embed/136f144e-f089-4486-bc51-4e10233bcfcd" frameborder="0" allowfullscreen="allowfullscreen"></iframe>
+</div>
+#+END_EXPORT
